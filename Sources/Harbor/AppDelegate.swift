@@ -1,14 +1,53 @@
 import AppKit
 import HarborCore
+import Sparkle
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, SPUUpdaterDelegate {
+    /// 自动更新（Sparkle，更新源和公钥在 Info.plist）。
+    /// 调试脚本运行时、不是从 .app 启动时（swift run）不启用，免得更新弹窗打断脚本
+    private var updaterController: SPUStandardUpdaterController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenu.make()
+        if Bundle.main.bundleURL.pathExtension == "app", ProcessInfo.processInfo.environment["HARBOR_SCRIPT"] == nil {
+            updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
+            if Self.debugFeedURL != nil, let updater = updaterController?.updater {
+                // 调试：后台检查、自动下载，下载完立即安装并重启（见 willInstallUpdateOnQuit）
+                updater.automaticallyDownloadsUpdates = true
+                updater.checkForUpdatesInBackground()
+            }
+        }
         // 窗口由 MainWindowController.all 持有
         MainWindowController(url: startURL()).showWindow(nil)
         NSApp.activate()
         SmokeScript.runIfRequested()
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        updaterController?.checkForUpdates(sender)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(checkForUpdates(_:)) {
+            return updaterController?.updater.canCheckForUpdates ?? false
+        }
+        return true
+    }
+
+    /// 调试用：HARBOR_FEED_URL 指向本地的 appcast，验证更新流程时不用发真的 Release
+    nonisolated static var debugFeedURL: String? { ProcessInfo.processInfo.environment["HARBOR_FEED_URL"] }
+
+    nonisolated func feedURLString(for updater: SPUUpdater) -> String? {
+        Self.debugFeedURL
+    }
+
+    /// 平时自动下载的更新等退出时再装；调试时立即安装，好验证整个流程
+    nonisolated func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
+                             immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
+        guard Self.debugFeedURL != nil else { return false }
+        immediateInstallHandler()
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {

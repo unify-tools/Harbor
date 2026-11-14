@@ -9,6 +9,7 @@ enum MainMenu {
 
         main.addItem(submenu("Harbor", [
             item("关于 Harbor", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
+            item("检查更新…", #selector(AppDelegate.checkForUpdates(_:))),
             .separator(),
             item("隐藏 Harbor", #selector(NSApplication.hide(_:)), "h"),
             item("隐藏其他", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),

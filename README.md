@@ -5,8 +5,10 @@ macOS 文件管理器，Swift + AppKit，最低 macOS 26。
 ## 常用命令
 
 ```sh
-scripts/bundle.sh            # 编译并生成 build/Harbor.app（release，本地临时签名）
+scripts/bundle.sh            # 编译并生成 build/Harbor.app（release）
 scripts/bundle.sh debug      # debug 版
+scripts/release.sh           # 发布到 GitHub Releases（见下面「发布」）
+scripts/release.sh --local   # 只在 build/release/ 生成 zip 和 appcast，不上传
 open build/Harbor.app        # 运行；也可以直接跑 build/Harbor.app/Contents/MacOS/Harbor <目录>
 scripts/test.sh              # 单测（没装 Xcode 时会自动补上 Swift Testing 的路径）
 swift run -c release HarborBench make <目录> 100000   # 生成测试目录
@@ -36,6 +38,16 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
   ```
 - `HARBOR_SNAPSHOT_DIR=<目录>`：配合 m3 / m4 保存截图
 - 应用不在前台（你在用别的应用）时，只有 key window 才能测的菜单检查会标「跳过」，收起边栏的动画也不执行
+
+## 签名和发布
+
+不买 Developer ID、不公证，零成本：
+
+- **签名**：`bundle.sh` 优先用登录钥匙串里的自签名证书「Harbor Self-Signed」（私钥只允许 codesign 使用）。签名身份固定，授予过的「完全磁盘访问权限」等在更新后保留；没有证书时退回临时签名。换机器要重新建证书（openssl 生成后 `security import … -T /usr/bin/codesign`），已安装的用户会要求重新授权
+- **更新**：Sparkle 2，更新源是 `https://github.com/unify-tools/Harbor/releases/latest/download/appcast.xml`（仓库必须公开）。EdDSA 私钥在登录钥匙串（账户 `dev.lakes.harbor`），丢了就没法给已安装的版本推更新，备份：`.build/artifacts/sparkle/Sparkle/bin/generate_keys --account dev.lakes.harbor -x <文件>`
+- **发布**：改 `Resources/Info.plist` 的 `CFBundleShortVersionString`，提交并推送，再跑 `scripts/release.sh`。构建号自动取提交数。上传用 gh 的 Lakes2 账号（`gh auth login` 加上，不用切换默认账号）
+- **首次安装**：别人下载后第一次打开会被系统拦下，要到「系统设置 → 隐私与安全性」点「仍要打开」；之后经 Sparkle 的更新不会再拦
+- `HARBOR_FEED_URL=<appcast 地址>`：调试更新流程，启动后后台检查、自动下载并立即安装。会往偏好里写 `SU*` 键，测完删掉
 
 ## 快捷键和命令（M3–M6 新增）
 
@@ -67,6 +79,7 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
   - `MainWindowController`：一个窗口 / 标签页（系统原生标签），边栏 + 一到两栏浏览区，菜单动作转给活动的那一栏
   - `PanesContainer`：包住一到两栏浏览区，底部悬浮进度胶囊（NSGlassEffectView），双栏时也只有一份；胶囊显示时各栏列表留出底部余量，最后几行不会被挡住
   - `QuickPanel`：⌘K / ⌘P 共用的玻璃浮层；`CommandPalette`、`QuickJump` 提供内容
+  - `AppDelegate`：启动、Sparkle 更新（菜单「检查更新…」；调试脚本运行时、`swift run` 时不启用）
   - `RecentPlaces`：访问记录存在 `~/Library/Application Support/Harbor/visits.json`
   - `TerminalPanel`：SwiftTerm 内嵌终端，和活动的那一栏双向同步目录；四周留边距，颜色跟系统深浅色；按 shell 选路径的引号规则（sh 系 / fish，不认识的 shell 遇到特殊字符拒绝插入）
 

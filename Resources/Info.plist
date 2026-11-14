@@ -28,6 +28,12 @@
 	<string>26.0</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/unify-tools/Harbor/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>guMIl6FYA3mZtDXWjtNXxGX6I+I2YGcanOEOtsmU0gM=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSHighResolutionCapable</key>
