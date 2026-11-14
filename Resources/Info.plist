@@ -2,51 +2,51 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleAllowMixedLocalizations</key>
+	<true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh-Hans</string>
+	<key>CFBundleDisplayName</key>
+	<string>Harbor</string>
 	<key>CFBundleExecutable</key>
 	<string>Harbor</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.lakes.harbor</string>
-	<key>CFBundleName</key>
-	<string>Harbor</string>
-	<key>CFBundleDisplayName</key>
-	<string>Harbor</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>CFBundleDevelopmentRegion</key>
-	<string>zh-Hans</string>
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>zh-Hans</string>
 	</array>
-	<key>CFBundleAllowMixedLocalizations</key>
-	<true/>
-	<key>LSMinimumSystemVersion</key>
-	<string>26.0</string>
+	<key>CFBundleName</key>
+	<string>Harbor</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
-	<key>SUFeedURL</key>
-	<string>https://github.com/unify-tools/Harbor/releases/latest/download/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>guMIl6FYA3mZtDXWjtNXxGX6I+I2YGcanOEOtsmU0gM=</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
-	<key>NSPrincipalClass</key>
-	<string>NSApplication</string>
-	<key>NSHighResolutionCapable</key>
-	<true/>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
 	<key>NSDesktopFolderUsageDescription</key>
 	<string>Harbor 需要读取桌面文件夹来显示其中的文件。</string>
 	<key>NSDocumentsFolderUsageDescription</key>
 	<string>Harbor 需要读取文稿文件夹来显示其中的文件。</string>
 	<key>NSDownloadsFolderUsageDescription</key>
 	<string>Harbor 需要读取下载文件夹来显示其中的文件。</string>
-	<key>NSRemovableVolumesUsageDescription</key>
-	<string>Harbor 需要读取外接磁盘来显示其中的文件。</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
 	<key>NSNetworkVolumesUsageDescription</key>
 	<string>Harbor 需要读取网络卷来显示其中的文件。</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Harbor 需要读取外接磁盘来显示其中的文件。</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/unify-tools/Harbor/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>guMIl6FYA3mZtDXWjtNXxGX6I+I2YGcanOEOtsmU0gM=</string>
 </dict>
 </plist>
