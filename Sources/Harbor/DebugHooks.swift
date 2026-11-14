@@ -23,9 +23,10 @@ enum DebugHooks {
         }
     }
 
-    /// 把窗口内容渲染成 PNG（不需要屏幕录制权限）
+    /// 把窗口内容渲染成 PNG（不需要屏幕录制权限）。
+    /// 玻璃（NSGlassEffectView）这一层画不出来，连里面的内容也一起丢掉，所以改画它的 contentView
     static func snapshot(_ window: NSWindow, to path: String) {
-        guard let content = window.contentView,
+        guard let content = (window.contentView as? NSGlassEffectView)?.contentView ?? window.contentView,
               let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return }
         content.cacheDisplay(in: content.bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
@@ -175,5 +176,13 @@ enum SmokeScript {
             if let found = findButton(title, in: subview) { return found }
         }
         return nil
+    }
+
+    static func findViews<T: NSView>(_ type: T.Type, in view: NSView?) -> [T] {
+        guard let view else { return [] }
+        var result: [T] = []
+        if let match = view as? T { result.append(match) }
+        for subview in view.subviews { result += findViews(type, in: subview) }
+        return result
     }
 }

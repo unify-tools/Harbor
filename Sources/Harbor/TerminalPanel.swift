@@ -29,23 +29,33 @@ final class TerminalPanelController: NSViewController, LocalProcessTerminalViewD
 
     var isRunning: Bool { terminalView?.process?.running == true }
 
+    /// 终端四周留的边距。SwiftTerm 自己不留边，文字会贴着左边；
+    /// 行数取整剩下的零头也落在边距里，由底色补齐
+    static let insets = NSEdgeInsets(top: 6, left: 10, bottom: 4, right: 0)
+
     override func loadView() {
-        view = NSView()
+        view = TerminalBackdropView()
     }
 
     // MARK: - 进程
 
     func start(in directory: URL) {
         guard terminalView == nil else { return }
-        let terminal = HarborTerminalView(frame: view.bounds)
+        let insets = Self.insets
+        let terminal = HarborTerminalView(frame: NSRect(x: insets.left, y: insets.bottom,
+                                                        width: max(0, view.bounds.width - insets.left - insets.right),
+                                                        height: max(0, view.bounds.height - insets.top - insets.bottom)))
         terminal.autoresizingMask = [.width, .height]
         terminal.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         terminal.processDelegate = self
         view.addSubview(terminal)
+        // 放进视图层级后再取颜色，外观才是窗口的
+        terminal.applySystemColors()
         terminalView = terminal
 
         let shell = Self.userShell()
         shellKind = ShellIntegration.kind(ofShell: shell)
+        terminal.quoteStyle = ShellIntegration.quoteStyle(ofShell: shell)
         var environment = Self.baseEnvironment()
         var args: [String] = []
         var execName = "-" + (shell as NSString).lastPathComponent
@@ -229,6 +239,34 @@ final class TerminalPanelController: NSViewController, LocalProcessTerminalViewD
     }()
 }
 
+/// 终端的底：和终端同色，填满四周的边距
+final class TerminalBackdropView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyColor()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColor()
+    }
+
+    /// cgColor 是按「当前绘制外观」解析的，要包在本视图的外观里取
+    private func applyColor() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+        }
+    }
+}
+
 /// 支持把文件粘贴、拖进终端：插入转义过的路径
 final class HarborTerminalView: LocalProcessTerminalView {
     override init(frame: CGRect) {
@@ -261,8 +299,32 @@ final class HarborTerminalView: LocalProcessTerminalView {
         return true
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applySystemColors()
+    }
+
+    /// 前景 / 底色跟系统外观走（文本色 / 文本底色）。不设的话前景是灰、底色是终端模型默认的黑，
+    /// 和界面其他部分割裂。SwiftTerm 只在赋值时把颜色解析一次，所以按当前外观解析成固定颜色再给它，
+    /// 外观变了再来一遍
+    func applySystemColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            nativeForegroundColor = NSColor.textColor.usingColorSpace(.sRGB) ?? .textColor
+            nativeBackgroundColor = NSColor.textBackgroundColor.usingColorSpace(.sRGB) ?? .textBackgroundColor
+        }
+    }
+
+    /// 按用户的 shell 选引号规则（start 时设置）
+    var quoteStyle = ShellIntegration.QuoteStyle.posix
+
     private func insertPaths(_ urls: [URL]) {
-        let text = urls.map { ShellIntegration.quote($0.pathKey) }.joined(separator: " ") + " "
+        // 有一个名字没法安全表示就整批不插，免得插进半截
+        let quoted = urls.compactMap { ShellIntegration.quote($0.pathKey, style: quoteStyle) }
+        guard quoted.count == urls.count else {
+            NSSound.beep()
+            return
+        }
+        let text = quoted.joined(separator: " ") + " "
         process?.send(data: Array(text.utf8)[...])
     }
 

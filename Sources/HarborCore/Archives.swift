@@ -191,7 +191,18 @@ public enum Archives {
                     archive_read_data_skip(reader)
                     continue
                 }
-                archive_entry_copy_hardlink(entry, stagingPath + "/" + target)
+                // 只链到本次已经解出来的普通文件。目标是符号链接、或者路径中间经过符号链接时，
+                // 带数据的硬链接条目会顺着链接写到暂存目录外面。暂存路径本身不含符号链接，
+                // 所以 realpath 不变就说明一路都是真实目录
+                let targetPath = (stagingPath.hasSuffix("/") ? String(stagingPath.dropLast()) : stagingPath) + "/" + target
+                var info = stat()
+                guard lstat(targetPath, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+                      realPath(targetPath) == targetPath else {
+                    skipped.append(name)
+                    archive_read_data_skip(reader)
+                    continue
+                }
+                archive_entry_copy_hardlink(entry, targetPath)
             }
             state.currentName = relative
 
@@ -253,6 +264,13 @@ public enum Archives {
         succeeded = true
         // 调用方按它看到的路径（可能含符号链接）比较，换回原目录下的同名路径
         return ExtractResult(output: directory.appending(path: output.lastPathComponent), skipped: skipped)
+    }
+
+    /// realpath(3)：解析所有符号链接；不存在时返回 nil
+    static func realPath(_ path: String) -> String? {
+        guard let resolved = realpath(path, nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     /// 压缩包里的路径转成相对路径；绝对路径、含「..」的拒绝（返回 nil）

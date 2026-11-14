@@ -82,7 +82,8 @@ import Testing
     }
 
     /// 用 libarchive 直接写一个带恶意路径的 tar
-    private func makeTar(_ url: URL, entries: [(path: String, symlink: String?, content: String)]) throws {
+    private func makeTar(_ url: URL, entries: [(path: String, symlink: String?, content: String)],
+                         hardlinks: [(path: String, target: String, content: String)] = []) throws {
         let writer = archive_write_new()!
         defer { archive_write_free(writer) }
         archive_write_set_format_pax_restricted(writer)
@@ -102,7 +103,46 @@ import Testing
                 _ = archive_write_data(writer, bytes, bytes.count)
             }
         }
+        // 带数据的硬链接条目（pax 允许）
+        for item in hardlinks {
+            let entry = archive_entry_new()!
+            defer { archive_entry_free(entry) }
+            var info = stat()
+            info.st_mode = S_IFREG | 0o644
+            info.st_size = off_t(item.content.utf8.count)
+            archive_entry_copy_stat(entry, &info)
+            archive_entry_copy_pathname(entry, item.path)
+            archive_entry_copy_hardlink(entry, item.target)
+            archive_write_header(writer, entry)
+            let bytes = Array(item.content.utf8)
+            _ = archive_write_data(writer, bytes, bytes.count)
+        }
         archive_write_close(writer)
+    }
+
+    /// 硬链接指向前面解出的符号链接（或经过符号链接）时，不能借它把数据写到外面
+    @Test func hardlinkThroughSymlinkStaysInside() throws {
+        let outside = try dir("outside-hl")
+        let victim = outside.appending(path: "victim.txt")
+        try write("original", to: victim)
+        let target = try dir("target-hl")
+        let archive = root.appending(path: "hardlink.tar")
+        try makeTar(archive, entries: [
+            ("file.txt", nil, "inside"),
+            ("evil", victim.path, ""),
+            ("dir", outside.path, ""),
+        ], hardlinks: [
+            ("h1", "evil", "pwned"),
+            ("h2", "dir/victim.txt", "pwned"),
+            ("h3", "file.txt", ""),
+        ])
+        let result = try Archives.extract(archive, into: target)
+        #expect(try String(contentsOf: victim, encoding: .utf8) == "original")
+        #expect(!fm.fileExists(atPath: result.output.appending(path: "h1").path))
+        #expect(!fm.fileExists(atPath: result.output.appending(path: "h2").path))
+        // 指向普通文件的硬链接照常解出
+        #expect(try String(contentsOf: result.output.appending(path: "h3"), encoding: .utf8) == "inside")
+        #expect(result.skipped.contains("h1") && result.skipped.contains("h2"))
     }
 
     @Test func refusesUnsafePaths() throws {

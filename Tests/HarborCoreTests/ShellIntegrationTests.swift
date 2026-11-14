@@ -22,6 +22,15 @@ import Testing
         // 控制字符不能原样进终端：^U 会清行、回车会执行
         #expect(ShellIntegration.quote("/a\u{15}rm x\r") == #"$'/a\x15rm x\x0d'"#)
         #expect(ShellIntegration.quote("/q'\\\u{1b}") == #"$'/q\'\\\x1b'"#)
+        // fish：单引号里 \\ 和 \' 是转义，控制字符放在引号外
+        #expect(ShellIntegration.quote("/it's\\x", style: .fish) == #"'/it\'s\\x'"#)
+        #expect(ShellIntegration.quote("/a\u{15}b", style: .fish) == #"'/a'\u0015'b'"#)
+        #expect(ShellIntegration.quote("/a\r", style: .fish) == #"'/a'\u000d"#)
+        #expect(ShellIntegration.quote("/a b", style: .conservative) == "'/a b'")
+        #expect(ShellIntegration.quote("/it's", style: .conservative) == nil)
+        #expect(ShellIntegration.quote("/a!b", style: .conservative) == nil)
+        #expect(ShellIntegration.quoteStyle(ofShell: "/opt/homebrew/bin/fish") == .fish)
+        #expect(ShellIntegration.quoteStyle(ofShell: "/bin/tcsh") == .conservative)
     }
 
     @Test func localHost() {

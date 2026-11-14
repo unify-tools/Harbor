@@ -104,17 +104,34 @@ enum M5Script {
         await wait(0.8)
         check(!exists("secret 2.txt") && leftovers().isEmpty, "取消输入密码后没有残留")
 
-        // 压缩到一半取消：进度条出现，取消后不留文件
+        // 压缩到一半取消：进度条出现（双栏时也只有一份），取消后不留文件
+        // 先单栏开始压缩，任务进行中再打开双栏：新加的那一栏也要让出底部
+        let wasDual = controller.isDualPane
+        controller.setDualPane(false)
+        browser.focusList()
+        await wait(0.3)
         select("big.bin")
         send("compressTarXz:")
         check(await waitUntil(3) { FileOperationCenter.shared.activeTransfers.count == 1 }, "压缩大文件时显示进度")
+        // 进度条延迟出现，等胶囊真的显示了再切双栏
+        check(await waitUntil(3) { controller.panesContainer.isOperationsBarVisible }, "进度胶囊出现")
+        controller.setDualPane(true)
         await wait(0.5)
+        let bars = SmokeScript.findViews(OperationsBar.self, in: window.contentView)
+        let visibleBars = bars.filter { !$0.isHiddenOrHasHiddenAncestor }
+        check(bars.count == 1 && visibleBars.count == 1 && controller.panesContainer.isOperationsBarVisible
+              && controller.panes.allSatisfy { !visibleBars[0].isDescendant(of: $0.view) && $0.bottomOverlap > 0 },
+              "双栏时进度条只有一份（共 \(bars.count) 个，可见 \(visibleBars.count) 个）：\(visibleBars.first?.displayedTitle ?? "")")
         let fraction = FileOperationCenter.shared.activeTransfers.first?.progress.fraction ?? 0
         check(fraction > 0 && fraction < 1, "进度在 0 和 1 之间：\(fraction)")
         FileOperationCenter.shared.activeTransfers.first?.cancel()
         check(await waitUntil(5) { FileOperationCenter.shared.activeTransfers.isEmpty }, "取消后任务结束")
         await wait(0.3)
         check(!exists("big.bin.tar.xz") && leftovers().isEmpty, "取消压缩后没有残留：\(leftovers())")
+        check(await waitUntil(2) { !controller.panesContainer.isOperationsBarVisible && bars.allSatisfy(\.isHiddenOrHasHiddenAncestor)
+                  && controller.panes.allSatisfy { $0.bottomOverlap == 0 } },
+              "任务结束后进度条收起，列表的底部余量也撤掉")
+        controller.setDualPane(wasDual)
 
         // 命令面板：拼音能找到压缩命令；没有选中项时不列出
         select("x.txt")

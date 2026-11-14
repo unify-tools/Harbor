@@ -16,7 +16,7 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
 验证用环境变量（release 构建也有效）：
 
 - `HARBOR_TIMING=1`：每次加载目录后在 stderr 打印条目数和耗时
-- `HARBOR_SNAPSHOT=<png 路径>`：首次加载后把窗口内容渲染成图片，不需要屏幕录制权限（边栏的系统材质画不出来）
+- `HARBOR_SNAPSHOT=<png 路径>`：首次加载后把窗口内容渲染成图片，不需要屏幕录制权限（边栏的系统材质、Liquid Glass 画不出来；玻璃面板改画里面的内容，视觉效果要在真机上看）
 - `HARBOR_SCRIPT=smoke`：在启动目录里自动走一遍拷贝、粘贴、撤销、重做、冲突、新建、重命名、废纸篓、剪切、复制，用假的废纸篓，结果打到 stderr，跑完退出。要用 `open` 启动，直接跑可执行文件时窗口成不了 key window：
 
   ```sh
@@ -37,13 +37,14 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
 - `HARBOR_SNAPSHOT_DIR=<目录>`：配合 m3 / m4 保存截图
 - 应用不在前台（你在用别的应用）时，只有 key window 才能测的菜单检查会标「跳过」，收起边栏的动画也不执行
 
-## 快捷键和命令（M3–M5 新增）
+## 快捷键和命令（M3–M6 新增）
 
 - ⌘N 新建窗口，⌘T 新建标签页，⌘双击 / 右键「在新标签页中打开」；多选打开时文件夹各开一个后台标签页
 - ⌘\ 双栏，列表里 Tab 切到另一栏，F5 拷贝到另一栏，F6 移动到另一栏
 - ⌘K 命令面板（命令取自主菜单，支持拼音全拼和首字母）
 - ⌘P 快速跳转（访问过的文件夹，按频率 + 最近访问排序；⌘↩ 在新标签页打开）
 - ⌃` 终端：没显示就打开并聚焦，焦点不在终端就聚焦，焦点在终端就收起（shell 保留）；`exit` 后自动收起
+- 工具栏右侧：双栏、终端（单纯显示 / 收起）两个按钮
 - 文件 → 压缩：ZIP / tar.gz / tar.xz / 7z；解压；双击压缩包 = 解压到当前文件夹（和 Finder 一样），「用默认应用打开」走系统默认
 - ⌥⌘C 拷贝所选路径（没有选中项时拷贝当前文件夹），⌥⇧⌘C 拷贝当前文件夹路径；地址栏右键也能拷贝
 
@@ -64,9 +65,10 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
 - `Sources/Harbor`：AppKit 界面（窗口、边栏、文件列表、地址栏、菜单）
   - `FileOperationCenter`：所有窗口共用的文件操作入口和撤销历史
   - `MainWindowController`：一个窗口 / 标签页（系统原生标签），边栏 + 一到两栏浏览区，菜单动作转给活动的那一栏
-  - `QuickPanel`：⌘K / ⌘P 共用的浮层；`CommandPalette`、`QuickJump` 提供内容
+  - `PanesContainer`：包住一到两栏浏览区，底部悬浮进度胶囊（NSGlassEffectView），双栏时也只有一份；胶囊显示时各栏列表留出底部余量，最后几行不会被挡住
+  - `QuickPanel`：⌘K / ⌘P 共用的玻璃浮层；`CommandPalette`、`QuickJump` 提供内容
   - `RecentPlaces`：访问记录存在 `~/Library/Application Support/Harbor/visits.json`
-  - `TerminalPanel`：SwiftTerm 内嵌终端，和活动的那一栏双向同步目录
+  - `TerminalPanel`：SwiftTerm 内嵌终端，和活动的那一栏双向同步目录；四周留边距，颜色跟系统深浅色；按 shell 选路径的引号规则（sh 系 / fish，不认识的 shell 遇到特殊字符拒绝插入）
 
 ## 终端的目录同步
 

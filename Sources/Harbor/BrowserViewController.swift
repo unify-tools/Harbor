@@ -68,8 +68,16 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     private let scrollView = NSScrollView()
     let tableView = FileTableView()
     private let statusBar = StatusBarView()
-    private let operationsBar = OperationsBar()
-    private var operationsBarHeight: NSLayoutConstraint!
+    static let statusBarHeight: CGFloat = 24
+
+    /// 列表底部被悬浮的进度胶囊盖住的高度。留出等量的滚动余量，最后几行能滚到胶囊上面
+    var bottomOverlap: CGFloat = 0 {
+        didSet {
+            guard bottomOverlap != oldValue else { return }
+            scrollView.automaticallyAdjustsContentInsets = false
+            scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomOverlap, right: 0)
+        }
+    }
     private let placeholder = PlaceholderView()
 
     init(url: URL) {
@@ -105,9 +113,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         pathBar.onCopyPath = { [weak self] in self?.copyCurrentPath(nil) }
 
         placeholder.isHidden = true
-        operationsBar.isHidden = true
-        operationsBarHeight = operationsBar.heightAnchor.constraint(equalToConstant: 0)
-        for subview in [pathBar, scrollView, operationsBar, statusBar, placeholder] as [NSView] {
+        for subview in [pathBar, scrollView, statusBar, placeholder] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(subview)
         }
@@ -120,17 +126,12 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             scrollView.topAnchor.constraint(equalTo: pathBar.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: operationsBar.topAnchor),
-
-            operationsBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            operationsBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            operationsBar.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
-            operationsBarHeight,
+            scrollView.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
 
             statusBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             statusBar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            statusBar.heightAnchor.constraint(equalToConstant: 24),
+            statusBar.heightAnchor.constraint(equalToConstant: Self.statusBarHeight),
 
             placeholder.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
             placeholder.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
@@ -141,15 +142,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        NotificationCenter.default.addObserver(self, selector: #selector(operationsDidChange),
-                                               name: FileOperationCenter.didChange, object: nil)
         navigate(to: currentURL)
-    }
-
-    @objc private func operationsDidChange() {
-        let visible = operationsBar.update(with: FileOperationCenter.shared.activeTransfers)
-        operationsBar.isHidden = !visible
-        operationsBarHeight.constant = visible ? 44 : 0
     }
 
     override func viewDidAppear() {

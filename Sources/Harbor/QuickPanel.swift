@@ -25,6 +25,7 @@ final class QuickPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
     private static let rowHeight: CGFloat = 40
     private static let maxVisibleRows = 9
     private static let footerHeight: CGFloat = 26
+    private static let cornerRadius: CGFloat = 22
 
     private let search: (String) -> [QuickPanelItem]
     private(set) var items: [QuickPanelItem] = []
@@ -75,13 +76,11 @@ final class QuickPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
     // MARK: - 布局
 
     private func makeContent(placeholder: String, footer: String) -> NSView {
-        let background = NSVisualEffectView()
-        background.material = .popover
-        background.blendingMode = .behindWindow
-        background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = 14
-        background.layer?.masksToBounds = true
+        // Liquid Glass：玻璃本身负责圆角、边缘高光和阴影，内容放在 contentView 里
+        let glass = NSGlassEffectView()
+        glass.cornerRadius = Self.cornerRadius
+        let background = NSView()
+        glass.contentView = background
 
         field.placeholderString = placeholder
         field.font = .systemFont(ofSize: 18)
@@ -157,7 +156,7 @@ final class QuickPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
             footerLabel.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 16),
             footerLabel.centerYAnchor.constraint(equalTo: background.bottomAnchor, constant: -Self.footerHeight / 2),
         ])
-        return background
+        return glass
     }
 
     private func present() {
@@ -312,7 +311,8 @@ private final class PanelRowView: NSTableRowView {
 
     override func drawSelection(in dirtyRect: NSRect) {
         NSColor.selectedContentBackgroundColor.setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 1), xRadius: 7, yRadius: 7).fill()
+        // 和玻璃面板的大圆角同心：左右留 10，圆角 10
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 10, dy: 1), xRadius: 10, yRadius: 10).fill()
     }
 }
 

@@ -46,6 +46,35 @@ enum M4Script {
         send("toggleTerminal:")
         check(controller.isTerminalVisible && terminal.isRunning, "⌃` 打开终端并启动 shell")
         check(window.firstResponder is HarborTerminalView, "焦点在终端")
+        if let view = terminal.terminalView {
+            let insets = TerminalPanelController.insets
+            check(view.frame.minX == insets.left && view.frame.minY == insets.bottom
+                  && view.frame.maxX == terminal.view.bounds.width - insets.right
+                  && view.frame.maxY == terminal.view.bounds.height - insets.top, "终端四周留边距：\(view.frame) in \(terminal.view.bounds)")
+            // 底色跟系统外观：和边距的底色一致，不是终端模型默认的黑
+            let resolved = { (color: NSColor) -> NSColor? in
+                var result: NSColor?
+                view.effectiveAppearance.performAsCurrentDrawingAppearance { result = color.usingColorSpace(.sRGB) }
+                return result
+            }
+            let expected = resolved(.textBackgroundColor)
+            let actual = view.layer?.backgroundColor.flatMap(NSColor.init(cgColor:))?.usingColorSpace(.sRGB)
+            let backdrop = terminal.view.layer?.backgroundColor.flatMap(NSColor.init(cgColor:))?.usingColorSpace(.sRGB)
+            check(expected != nil && actual == expected && backdrop == expected,
+                  "终端底色与边距一致且跟随外观：\(String(describing: actual)) / \(String(describing: backdrop))")
+            // 切到另一种外观，两层底色一起变
+            let original = window.appearance
+            let isDark = view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            window.appearance = NSAppearance(named: isDark ? .aqua : .darkAqua)
+            await wait(0.3)
+            let flipped = resolved(.textBackgroundColor)
+            let flippedActual = view.layer?.backgroundColor.flatMap(NSColor.init(cgColor:))?.usingColorSpace(.sRGB)
+            let flippedBackdrop = terminal.view.layer?.backgroundColor.flatMap(NSColor.init(cgColor:))?.usingColorSpace(.sRGB)
+            check(flipped != expected && flippedActual == flipped && flippedBackdrop == flipped,
+                  "切换深浅色后底色跟着变：\(String(describing: flippedActual)) / \(String(describing: flippedBackdrop))")
+            window.appearance = original
+            await wait(0.3)
+        }
         let started = await waitUntil(15) { terminal.reportedDirectory == root.pathKey }
         check(started, "shell 报告当前目录（OSC 7）：\(terminal.reportedDirectory ?? "无")")
         guard started else { return SmokeScript.finish("shell integration 没生效，后面的步骤跳过") }

@@ -4,6 +4,8 @@ import HarborCore
 private extension NSToolbarItem.Identifier {
     static let back = Self("back")
     static let forward = Self("forward")
+    static let dualPane = Self("dualPane")
+    static let terminal = Self("terminal")
 }
 
 /// 一个窗口（或一个标签页）= 边栏 + 工作区；工作区上面是一到两个浏览区，下面是可收起的终端。
@@ -20,6 +22,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private let workspace = ChildSplitViewController()
     /// 第一栏 | 第二栏
     private let paneSplit = ChildSplitViewController()
+    /// 包着 paneSplit，加一层悬浮的进度胶囊
+    private(set) lazy var panesContainer = PanesContainerController(paneSplit: paneSplit)
     private let terminalPanel = TerminalPanelController()
     private let terminalItem: NSSplitViewItem
     private let sidebar = SidebarViewController()
@@ -71,7 +75,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         if Preferences.dualPane { setDualPane(true) } else { updateSplitAutosave() }
 
         workspace.splitView.isVertical = false
-        let panesItem = NSSplitViewItem(viewController: paneSplit)
+        let panesItem = NSSplitViewItem(viewController: panesContainer)
         panesItem.minimumThickness = 160
         terminalItem.canCollapse = true
         terminalItem.minimumThickness = 80
@@ -167,6 +171,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         // 第一次用双栏、还没有保存过分栏宽度时，两栏等宽
         if on, !hasSavedDualSplit { equalizePanes() }
         updatePaneAppearance()
+        panesContainer.updatePaneInsets()
     }
 
     private var hasSavedDualSplit: Bool {
@@ -205,6 +210,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         } else {
             window?.makeFirstResponder(terminalPanel.terminalView)
         }
+    }
+
+    /// 工具栏按钮：单纯的显示 / 收起（点按钮时焦点不在终端，⌃` 的「先聚焦」不适用）
+    @objc private func terminalButtonClicked(_ sender: Any?) {
+        if isTerminalVisible { hideTerminal() } else { showTerminal() }
     }
 
     private func showTerminal() {
@@ -414,7 +424,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     // MARK: - 工具栏
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .back, .forward]
+        [.toggleSidebar, .sidebarTrackingSeparator, .back, .forward, .flexibleSpace, .dualPane, .terminal]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -433,9 +443,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             forwardItem = item
             item.isEnabled = activeBrowser.history.canGoForward
             return item
+        case .dualPane:
+            return actionItem(identifier, symbol: "rectangle.split.2x1", label: "双栏", action: #selector(toggleDualPane(_:)))
+        case .terminal:
+            return actionItem(identifier, symbol: "apple.terminal", label: "终端", action: #selector(terminalButtonClicked(_:)))
         default:
             return nil
         }
+    }
+
+    private func actionItem(_ identifier: NSToolbarItem.Identifier, symbol: String, label: String, action: Selector) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        item.label = label
+        item.toolTip = label
+        item.isBordered = true
+        item.target = self
+        item.action = action
+        return item
     }
 
     private func navigationItem(_ identifier: NSToolbarItem.Identifier, symbol: String, label: String, action: Selector) -> NSToolbarItem {

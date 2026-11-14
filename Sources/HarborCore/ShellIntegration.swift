@@ -85,30 +85,79 @@ public enum ShellIntegration {
         return normalized(raw)
     }
 
-    /// 粘贴、拖进终端的路径：只含安全字符时原样，否则用单引号包起来。
-    /// 含控制字符（APFS 允许文件名里有 ^U、回车）时改用 $'…' 并把它们写成 \xNN，
-    /// 否则这些字符原样进终端会被行编辑器当成按键，文件名就能注入命令
-    public static func quote(_ path: String) -> String {
-        let safe = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-+,:@%")
-        if !path.isEmpty, path.unicodeScalars.allSatisfy(safe.contains) { return path }
-        let hasControl = path.unicodeScalars.contains { $0.value < 0x20 || (0x7F...0x9F).contains($0.value) }
-        guard hasControl else {
-            return "'" + path.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
+    /// 插入路径时的引号规则，按 shell 选
+    public enum QuoteStyle: Sendable, Equatable {
+        /// sh 系：'…' 里没有转义，单引号写成 '\''
+        case posix
+        /// fish：'…' 里 \\ 和 \' 是转义
+        case fish
+        /// 不认识的 shell（tcsh、nu、xonsh…）：只接受各家单引号都按字面处理的名字
+        case conservative
+    }
+
+    public static func quoteStyle(ofShell path: String) -> QuoteStyle {
+        switch (path as NSString).lastPathComponent {
+        case "zsh", "bash", "sh", "dash", "ksh", "mksh": .posix
+        case "fish": .fish
+        default: .conservative
         }
-        var result = "$'"
-        for scalar in path.unicodeScalars {
-            switch scalar {
-            case "\\": result += #"\\"#
-            case "'": result += #"\'"#
-            default:
-                if scalar.value < 0x20 || (0x7F...0x9F).contains(scalar.value) {
-                    for byte in String(scalar).utf8 { result += String(format: "\\x%02x", byte) }
-                } else {
-                    result.unicodeScalars.append(scalar)
+    }
+
+    private static let safeCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-+,:@%")
+
+    private static func isControl(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.value < 0x20 || (0x7F...0x9F).contains(scalar.value)
+    }
+
+    /// 粘贴、拖进终端的路径：只含安全字符时原样，否则按 shell 的规则加引号。
+    /// 含控制字符（APFS 允许文件名里有 ^U、回车）时写成转义，
+    /// 否则这些字符原样进终端会被行编辑器当成按键，文件名就能注入命令。
+    /// 没法安全表示时返回 nil（调用方不插入）
+    public static func quote(_ path: String, style: QuoteStyle = .posix) -> String? {
+        if !path.isEmpty, path.unicodeScalars.allSatisfy(safeCharacters.contains) { return path }
+        let hasControl = path.unicodeScalars.contains(where: isControl)
+        switch style {
+        case .posix:
+            guard hasControl else {
+                return "'" + path.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
+            }
+            var result = "$'"
+            for scalar in path.unicodeScalars {
+                switch scalar {
+                case "\\": result += #"\\"#
+                case "'": result += #"\'"#
+                default:
+                    if isControl(scalar) {
+                        for byte in String(scalar).utf8 { result += String(format: "\\x%02x", byte) }
+                    } else {
+                        result.unicodeScalars.append(scalar)
+                    }
                 }
             }
+            return result + "'"
+        case .fish:
+            // 控制字符放在引号外，用 \uXXXX
+            var result = "'"
+            var quoted = true
+            for scalar in path.unicodeScalars {
+                if isControl(scalar) {
+                    if quoted { result += "'"; quoted = false }
+                    result += String(format: "\\u%04x", scalar.value)
+                    continue
+                }
+                if !quoted { result += "'"; quoted = true }
+                switch scalar {
+                case "\\": result += #"\\"#
+                case "'": result += #"\'"#
+                default: result.unicodeScalars.append(scalar)
+                }
+            }
+            return quoted ? result + "'" : result
+        case .conservative:
+            let risky = CharacterSet(charactersIn: "'\\!")
+            guard !hasControl, !path.unicodeScalars.contains(where: risky.contains) else { return nil }
+            return "'" + path + "'"
         }
-        return result + "'"
     }
 
     /// OSC 7 里的主机名是不是本机。ssh 到别的机器后，远端 shell 报告的目录不能拿来跳转

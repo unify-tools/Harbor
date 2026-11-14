@@ -218,9 +218,11 @@ final class FileTableView: NSTableView {
     }
 }
 
-/// 列表下方的进度条：显示进行中的拷贝 / 移动，可以取消
+/// 拷贝 / 移动 / 压缩的进度，可以取消。每个窗口一份，悬浮在浏览区底部（玻璃胶囊），双栏时也只有一个
 @MainActor
 final class OperationsBar: NSView {
+    static let height: CGFloat = 46
+
     private let label = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
     private let indicator = NSProgressIndicator()
@@ -229,7 +231,7 @@ final class OperationsBar: NSView {
 
     init() {
         super.init(frame: .zero)
-        label.font = .systemFont(ofSize: 12)
+        label.font = .systemFont(ofSize: 12, weight: .medium)
         label.lineBreakMode = .byTruncatingMiddle
         detail.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         detail.textColor = .secondaryLabelColor
@@ -245,26 +247,21 @@ final class OperationsBar: NSView {
         cancelButton.target = self
         cancelButton.action = #selector(cancelClicked)
 
-        let separator = NSBox()
-        separator.boxType = .separator
-        for subview in [separator, label, detail, indicator, cancelButton] as [NSView] {
+        for subview in [label, detail, indicator, cancelButton] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             addSubview(subview)
         }
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         NSLayoutConstraint.activate([
-            separator.topAnchor.constraint(equalTo: topAnchor),
-            separator.leadingAnchor.constraint(equalTo: leadingAnchor),
-            separator.trailingAnchor.constraint(equalTo: trailingAnchor),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             detail.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 8),
             detail.trailingAnchor.constraint(equalTo: cancelButton.leadingAnchor, constant: -8),
             detail.firstBaselineAnchor.constraint(equalTo: label.firstBaselineAnchor),
-            indicator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            indicator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
             indicator.trailingAnchor.constraint(equalTo: cancelButton.leadingAnchor, constant: -8),
-            indicator.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
-            cancelButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            indicator.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            cancelButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             cancelButton.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
@@ -295,4 +292,7 @@ final class OperationsBar: NSView {
     @objc private func cancelClicked() {
         activity?.cancel()
     }
+
+    /// 给调试脚本看
+    var displayedTitle: String { label.stringValue }
 }
