@@ -13,9 +13,30 @@ final class PathBarView: NSView, NSTextFieldDelegate {
     var onCopyPath: (() -> Void)?
 
     var url = URL(filePath: "/") {
-        didSet { pathControl.url = url }
+        didSet {
+            pathControl.url = url
+            isVirtual = false
+            virtualTitle.isHidden = true
+            pathControl.isHidden = !field.isHidden
+        }
     }
 
+    /// 主页、分类这类虚拟位置：显示图标 + 标题，不显示面包屑
+    func showVirtual(title: String, symbol: String) {
+        isVirtual = true
+        let attachment = NSTextAttachment()
+        attachment.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        let text = NSMutableAttributedString(attachment: attachment)
+        text.append(NSAttributedString(string: " " + title))
+        text.addAttributes([.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.labelColor],
+                           range: NSRange(location: 0, length: text.length))
+        virtualTitle.attributedStringValue = text
+        virtualTitle.isHidden = !field.isHidden
+        pathControl.isHidden = true
+    }
+
+    private(set) var isVirtual = false
+    private let virtualTitle = NSTextField(labelWithString: "")
     private let pathControl = NSPathControl()
     private let field = NSTextField()
 
@@ -51,7 +72,8 @@ final class PathBarView: NSView, NSTextFieldDelegate {
         menu = contextMenu
         pathControl.menu = contextMenu
 
-        for subview in [pathControl, field, separator] as [NSView] {
+        virtualTitle.isHidden = true
+        for subview in [pathControl, virtualTitle, field, separator] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             addSubview(subview)
         }
@@ -59,6 +81,9 @@ final class PathBarView: NSView, NSTextFieldDelegate {
             pathControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             pathControl.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             pathControl.centerYAnchor.constraint(equalTo: centerYAnchor),
+            virtualTitle.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            virtualTitle.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            virtualTitle.centerYAnchor.constraint(equalTo: centerYAnchor),
             field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             field.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             field.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -93,10 +118,11 @@ final class PathBarView: NSView, NSTextFieldDelegate {
 
     func beginEditing() {
         // 末尾带 /，按 → 后可以直接接着输入子目录
-        var text = (url.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
+        var text = isVirtual ? "~" : (url.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
         if !text.hasSuffix("/") { text += "/" }
         field.stringValue = text
         pathControl.isHidden = true
+        virtualTitle.isHidden = true
         field.isHidden = false
         window?.makeFirstResponder(field)
         field.currentEditor()?.selectAll(nil)
@@ -107,7 +133,8 @@ final class PathBarView: NSView, NSTextFieldDelegate {
         guard !field.isHidden else { return }
         // 先切回面包屑，再交出焦点，避免 controlTextDidEndEditing 重复处理
         field.isHidden = true
-        pathControl.isHidden = false
+        pathControl.isHidden = isVirtual
+        virtualTitle.isHidden = !isVirtual
         onEndEditing?()
     }
 

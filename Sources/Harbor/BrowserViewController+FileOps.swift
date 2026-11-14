@@ -55,17 +55,18 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
 
     /// ⌥⇧⌘C：拷贝当前文件夹的路径
     @objc func copyCurrentPath(_ sender: Any?) {
+        guard !isVirtual else { return }
         writePaths([currentURL])
     }
 
-    private func writePaths(_ urls: [URL]) {
+    func writePaths(_ urls: [URL]) {
         let paths = urls.map(\.pathKey)
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(paths.joined(separator: "\n"), forType: .string)
     }
 
-    private func writeToPasteboard(_ urls: [URL], cut: Bool) {
+    func writeToPasteboard(_ urls: [URL], cut: Bool) {
         guard !urls.isEmpty else { return }
         let entries = urls.enumerated().map { index, url in
             let entry = NSPasteboardItem()
@@ -259,11 +260,18 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
     func beginRename() {
         guard renamingItem == nil, tableView.selectedRowIndexes.count == 1,
               let row = tableView.selectedRowIndexes.first, row < items.count else { return }
-        let column = tableView.column(withIdentifier: NSUserInterfaceItemIdentifier(Column.name.rawValue))
-        guard column >= 0 else { return }
-        tableView.scrollRowToVisible(row)
-        guard let cell = tableView.view(atColumn: column, row: row, makeIfNecessary: true) as? NSTableCellView,
-              let field = cell.textField else { return }
+        let field: NSTextField
+        if viewMode == .icons {
+            guard let gridField = gridNameField(at: row) else { return }
+            field = gridField
+        } else {
+            let column = tableView.column(withIdentifier: NSUserInterfaceItemIdentifier(Column.name.rawValue))
+            guard column >= 0 else { return }
+            tableView.scrollRowToVisible(row)
+            guard let cell = tableView.view(atColumn: column, row: row, makeIfNecessary: true) as? NSTableCellView,
+                  let cellField = cell.textField else { return }
+            field = cellField
+        }
 
         let item = items[row]
         renamingItem = item
@@ -341,13 +349,18 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
 
     func tableView(_ tableView: NSTableView, validateDrop info: any NSDraggingInfo, proposedRow row: Int,
                    proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
-        let sources = draggedURLs(info)
-        guard !sources.isEmpty else { return [] }
         let target = dropTarget(row: row, dropOperation: dropOperation)
         if target.pathKey == currentURL.pathKey {
             // 不是落在文件夹上：整个列表作为目标
             tableView.setDropRow(-1, dropOperation: .on)
         }
+        return validatedDropOperation(info, target: target)
+    }
+
+    /// 列表和网格共用：拖进 target 时用什么操作，[] 表示不接受
+    func validatedDropOperation(_ info: any NSDraggingInfo, target: URL) -> NSDragOperation {
+        let sources = draggedURLs(info)
+        guard !sources.isEmpty, !isVirtual else { return [] }
         if sources.contains(where: { $0.pathKey == target.pathKey }) { return [] }
         let operation = dragOperation(for: info, sources: sources, target: target)
         // 在同一个目录里拖来拖去不算移动
@@ -357,14 +370,17 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
         return operation
     }
 
-    func tableView(_ tableView: NSTableView, acceptDrop info: any NSDraggingInfo, row: Int,
-                   dropOperation: NSTableView.DropOperation) -> Bool {
+    func performFileDrop(_ info: any NSDraggingInfo, target: URL) -> Bool {
         let sources = draggedURLs(info)
-        let target = dropTarget(row: row, dropOperation: dropOperation)
-        let operation = dragOperation(for: info, sources: sources, target: target)
+        let operation = validatedDropOperation(info, target: target)
         guard !sources.isEmpty, !operation.isEmpty else { return false }
         startTransfer(operation == .copy ? .copy : .move, sources, to: target)
         return true
+    }
+
+    func tableView(_ tableView: NSTableView, acceptDrop info: any NSDraggingInfo, row: Int,
+                   dropOperation: NSTableView.DropOperation) -> Bool {
+        performFileDrop(info, target: dropTarget(row: row, dropOperation: dropOperation))
     }
 
     private func dropTarget(row: Int, dropOperation: NSTableView.DropOperation) -> URL {
@@ -399,7 +415,7 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let row = tableView.clickedRow
+        let row = viewMode == .icons ? gridView.clickedIndex : tableView.clickedRow
         // 右键点在未选中的行上：改为选中这一行；点在空白处：取消选择
         if row >= 0, !tableView.selectedRowIndexes.contains(row) {
             tableView.selectRowIndexes([row], byExtendingSelection: false)
@@ -422,6 +438,9 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
             openWith.submenu = makeOpenWithMenu(for: selectedURLs)
             menu.addItem(openWith)
             if selectionHasFolder { add("在新标签页中打开", #selector(openInNewTab(_:))) }
+            if tableView.selectedRowIndexes.count == 1, selectionHasFolder {
+                add(QuickAccessStore.shared.contains(selectedURLs[0]) ? "从快速访问移除" : "添加至快速访问", #selector(toggleQuickAccess(_:)))
+            }
             if selectionHasArchive {
                 add("解压", #selector(extractSelection(_:)))
                 add("用默认应用打开", #selector(openWithDefaultApp(_:)))
@@ -437,6 +456,7 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
             add("移到废纸篓", #selector(moveToTrash(_:)))
         } else {
             add("新建文件夹", #selector(newFolder(_:)))
+            add("新建智能分类…", #selector(newSmartCategory(_:)))
             add("粘贴", #selector(paste(_:)))
             menu.addItem(.separator())
             add("拷贝当前文件夹路径", #selector(copyCurrentPath(_:)))
@@ -461,9 +481,22 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         let count = tableView.selectedRowIndexes.count
         // 预览开着时始终可用（用来关闭）。这时 key window 是预览面板，isEditingText 会误判成正在输入
-        if menuItem.action == #selector(toggleQuickLook(_:)) {
+        switch menuItem.action {
+        case #selector(toggleQuickLook(_:)):
             return Self.isQuickLookVisible || (count > 0 && !isEditingText)
+        case #selector(showAsIcons(_:)):
+            menuItem.state = viewMode == .icons ? .on : .off
+            return true
+        case #selector(showAsList(_:)):
+            menuItem.state = viewMode == .list ? .on : .off
+            return true
+        case #selector(newSmartCategory(_:)):
+            return true
+        default:
+            break
         }
+        // 主页、分类等虚拟位置没有「当前文件夹」，文件操作都不可用（结果列表自己的拷贝等由它处理）
+        if isVirtual { return false }
         if isEditingText {
             // 文本框自己处理拷贝、粘贴，到不了这里；终端没有「剪切」，会落到这里，也要禁用
             switch menuItem.action {
@@ -488,10 +521,36 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
             return selectionHasFolder
         case #selector(renameSelection(_:)):
             return count == 1
+        case #selector(toggleQuickAccess(_:)):
+            if count == 1, selectionHasFolder {
+                menuItem.title = QuickAccessStore.shared.contains(selectedURLs[0]) ? "从快速访问移除" : "添加至快速访问"
+                return true
+            }
+            return false
         case #selector(paste(_:)), #selector(pasteMove(_:)):
             return pasteboardURLs() != nil
         default:
             return true
+        }
+    }
+
+    // MARK: - 快速访问、智能分类
+
+    @objc func toggleQuickAccess(_ sender: Any?) {
+        guard selectedURLs.count == 1, let url = selectedURLs.first else { return }
+        if QuickAccessStore.shared.contains(url) {
+            QuickAccessStore.shared.remove(url)
+        } else {
+            QuickAccessStore.shared.add(url)
+        }
+    }
+
+    /// 新建后直接打开这个分类
+    @objc func newSmartCategory(_ sender: Any?) {
+        guard let window = view.window else { return }
+        SmartCategoryEditor.create(in: window) { [weak self] category in
+            SmartCategoryStore.shared.save(category)
+            self?.navigate(to: VirtualLocation.smart(category.id).url)
         }
     }
 }

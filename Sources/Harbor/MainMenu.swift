@@ -22,6 +22,7 @@ enum MainMenu {
             item("新建窗口", #selector(MainWindowController.newWindow(_:)), "n"),
             item("新建标签页", #selector(NSResponder.newWindowForTab(_:)), "t"),
             item("新建文件夹", #selector(BrowserViewController.newFolder(_:)), "n", [.command, .shift]),
+            item("新建智能分类…", #selector(BrowserViewController.newSmartCategory(_:)), "n", [.command, .option]),
             .separator(),
             item("打开", #selector(MainWindowController.openSelection(_:)), "o"),
             item("在新标签页中打开", #selector(BrowserViewController.openInNewTab(_:))),
@@ -39,6 +40,7 @@ enum MainMenu {
             item("解压", #selector(BrowserViewController.extractSelection(_:))),
             item("用默认应用打开", #selector(BrowserViewController.openWithDefaultApp(_:))),
             item("快速查看", #selector(BrowserViewController.toggleQuickLook(_:)), "y"),
+            item("添加至快速访问", #selector(BrowserViewController.toggleQuickAccess(_:)), "t", [.command, .control]),
             .separator(),
             item("移到废纸篓", #selector(BrowserViewController.moveToTrash(_:)), "\u{8}"),
             item("立即删除…", #selector(BrowserViewController.deleteImmediately(_:)), "\u{8}", [.command, .option]),
@@ -64,6 +66,9 @@ enum MainMenu {
         ]))
 
         main.addItem(submenu("显示", [
+            item("图标", #selector(BrowserViewController.showAsIcons(_:)), "1"),
+            item("列表", #selector(BrowserViewController.showAsList(_:)), "2"),
+            .separator(),
             item("显示隐藏文件", #selector(MainWindowController.toggleHiddenFiles(_:)), ".", [.command, .shift]),
             item("刷新", #selector(MainWindowController.refresh(_:)), "r"),
             .separator(),
@@ -89,6 +94,7 @@ enum MainMenu {
             item("上层文件夹", #selector(MainWindowController.goUp(_:)), key(NSUpArrowFunctionKey)),
             item("打开所选项", #selector(MainWindowController.openSelection(_:)), key(NSDownArrowFunctionKey)),
             .separator(),
+            item("主页", #selector(MainWindowController.goHomePage(_:)), "f", [.command, .shift]),
             item("主目录", #selector(MainWindowController.goHome(_:)), "h", [.command, .shift]),
             item("桌面", #selector(MainWindowController.goDesktop(_:)), "d", [.command, .shift]),
             item("文稿", #selector(MainWindowController.goDocuments(_:)), "o", [.command, .shift]),

@@ -25,14 +25,19 @@ extension BrowserViewController: @preconcurrency QLPreviewPanelDataSource, @prec
 
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
 
+    // 预览面板总在主线程回调
     override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        panel.dataSource = self
-        panel.delegate = self
+        MainActor.assumeIsolated {
+            panel.dataSource = self
+            panel.delegate = self
+        }
     }
 
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        panel.dataSource = nil
-        panel.delegate = nil
+        MainActor.assumeIsolated {
+            panel.dataSource = nil
+            panel.delegate = nil
+        }
     }
 
     // MARK: - 数据
@@ -60,8 +65,14 @@ extension BrowserViewController: @preconcurrency QLPreviewPanelDataSource, @prec
     /// 打开 / 关闭时的缩放动画从这一行的图标位置开始
     func previewPanel(_ panel: QLPreviewPanel!, sourceFrameOnScreenFor item: QLPreviewItem!) -> NSRect {
         guard let url = item.previewItemURL, let window = view.window,
-              let row = items.firstIndex(where: { $0.url(in: currentURL) == url }),
-              let column = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(Column.name.rawValue)) else { return .zero }
+              let row = items.firstIndex(where: { $0.url(in: currentURL) == url }) else { return .zero }
+        if viewMode == .icons {
+            // 图标视图：从网格里这一项的图标开始
+            guard let cell = gridView.item(at: IndexPath(item: row, section: 0))?.imageView,
+                  gridView.visibleRect.intersects(cell.convert(cell.bounds, to: gridView)) else { return .zero }
+            return window.convertToScreen(cell.convert(cell.bounds, to: nil))
+        }
+        guard let column = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(Column.name.rawValue)) else { return .zero }
         let cell = tableView.frameOfCell(atColumn: tableView.column(withIdentifier: column.identifier), row: row)
         let icon = NSRect(x: cell.minX, y: cell.minY, width: cell.height, height: cell.height)
         guard tableView.visibleRect.intersects(icon) else { return .zero }

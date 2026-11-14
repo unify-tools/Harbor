@@ -47,6 +47,7 @@ enum SmokeScript {
         case "m3": Task { await M3Script.run() }
         case "m4": Task { await M4Script.run() }
         case "m5": Task { await M5Script.run() }
+        case "m8": Task { await M8Script.run() }
         default: break
         }
     }
@@ -76,6 +77,15 @@ enum SmokeScript {
             browser.focusList()
         }
         func wait(_ seconds: Double = 0.6) async { try? await Task.sleep(for: .milliseconds(Int(seconds * 1000))) }
+        /// 异步的文件操作（撤销、重做）完成时间不固定，轮询等待，不用固定时长
+        func waitUntil(_ timeout: Double, _ condition: () -> Bool) async -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                if condition() { return true }
+                await wait(0.1)
+            }
+            return condition()
+        }
 
         // 菜单校验走 supplementalTarget：有选中项时「移到废纸篓」可用
         select("a.txt")
@@ -127,8 +137,7 @@ enum SmokeScript {
         await wait()
         check(exists("folder/改名后") && !exists("folder/未命名文件夹"), "新建文件夹并重命名")
         send("undo:")
-        await wait()
-        check(exists("folder/未命名文件夹") && !exists("folder/改名后"), "撤销重命名")
+        check(await waitUntil(3) { exists("folder/未命名文件夹") && !exists("folder/改名后") }, "撤销重命名")
 
         // 回到上层，移到废纸篓再撤销
         browser.goUp()
@@ -157,22 +166,14 @@ enum SmokeScript {
         check(exists("folder/b 2.txt"), "复制出副本")
 
         // 空格快速查看：打开、方向键换文件预览跟着变、再按空格关闭。第一次加载 Quick Look 较慢，轮询等待
-        func waitUntil(_ timeout: Double, _ condition: () -> Bool) async -> Bool {
-            let deadline = Date().addingTimeInterval(timeout)
-            while Date() < deadline {
-                if condition() { return true }
-                await wait(0.1)
-            }
-            return condition()
-        }
         // 右键「打开方式」：默认应用排第一并标注，最后是「其他…」
         select("b.txt")
         let contextMenu = NSMenu()
         browser.populateContextMenu(contextMenu, row: browser.tableView.selectedRow)
         let openWith = contextMenu.items.first { $0.title == "打开方式" }?.submenu
-        let apps = openWith?.items.filter { $0.representedObject is URL } ?? []
+        let apps = openWith?.items.filter { ($0.representedObject as? OpenWithChoice)?.app != nil } ?? []
         let expectedDefault = NSWorkspace.shared.urlForApplication(toOpen: root.appending(path: "folder/b.txt"))?.standardizedFileURL
-        check(openWith != nil && (apps.first?.representedObject as? URL) == expectedDefault && apps.first?.title.hasSuffix("（默认）") == true
+        check(openWith != nil && (apps.first?.representedObject as? OpenWithChoice)?.app == expectedDefault && apps.first?.title.hasSuffix("（默认）") == true
               && apps.dropFirst().allSatisfy { !$0.title.hasSuffix("（默认）") } && openWith?.items.last?.title == "其他…",
               "右键「打开方式」：\(apps.map(\.title))")
 

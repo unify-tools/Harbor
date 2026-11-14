@@ -26,7 +26,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private(set) lazy var panesContainer = PanesContainerController(paneSplit: paneSplit)
     private let terminalPanel = TerminalPanelController()
     private let terminalItem: NSSplitViewItem
-    private let sidebar = SidebarViewController()
+    let sidebar = SidebarViewController()
     private let primary: BrowserViewController
     private let primaryItem: NSSplitViewItem
     /// 双栏的第二栏。收起后保留实例，再次打开时回到原来的位置
@@ -225,7 +225,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         splitView.setPosition(max(160, splitView.bounds.height - splitView.dividerThickness - height), ofDividerAt: 0)
         splitView.layoutSubtreeIfNeeded()
         if !terminalPanel.isRunning {
-            terminalPanel.start(in: activeBrowser.currentURL)
+            terminalPanel.start(in: activeBrowser.isVirtual ? FileManager.default.homeDirectoryForCurrentUser : activeBrowser.currentURL)
         }
         window?.makeFirstResponder(terminalPanel.terminalView)
     }
@@ -269,10 +269,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     private func updateForActiveBrowser() {
         let url = activeBrowser.currentURL
-        window?.title = FileManager.default.displayName(atPath: url.path(percentEncoded: false))
-        window?.representedURL = url
         sidebar.reveal(url)
-        terminalPanel.sync(to: url)
+        if let location = VirtualLocation(url: url) {
+            // 主页、分类没有对应的目录：标题用名称，终端不跟着跳
+            window?.title = location.title
+            window?.representedURL = nil
+        } else {
+            window?.title = FileManager.default.displayName(atPath: url.path(percentEncoded: false))
+            window?.representedURL = url
+            terminalPanel.sync(to: url)
+        }
         backItem?.isEnabled = activeBrowser.history.canGoBack
         forwardItem?.isEnabled = activeBrowser.history.canGoForward
     }
@@ -336,6 +342,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     @objc func goHome(_ sender: Any?) { go(FileManager.default.homeDirectoryForCurrentUser) }
+    @objc func goHomePage(_ sender: Any?) { go(VirtualLocation.home.url) }
     @objc func goDesktop(_ sender: Any?) { go(.desktopDirectory) }
     @objc func goDocuments(_ sender: Any?) { go(.documentsDirectory) }
     @objc func goDownloads(_ sender: Any?) { go(.downloadsDirectory) }
@@ -414,9 +421,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             menuItem.state = isTerminalVisible ? .on : .off
             return true
         case #selector(copyToOtherPane(_:)):
-            return isDualPane && activeBrowser.hasSelection
+            return isDualPane && activeBrowser.hasSelection && otherBrowser?.isVirtual == false
         case #selector(moveToOtherPane(_:)):
-            return isDualPane && activeBrowser.hasSelection && otherBrowser?.currentURL.pathKey != activeBrowser.currentURL.pathKey
+            return isDualPane && activeBrowser.hasSelection && otherBrowser?.isVirtual == false
+                && otherBrowser?.currentURL.pathKey != activeBrowser.currentURL.pathKey
         default: return true
         }
     }

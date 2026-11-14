@@ -52,7 +52,7 @@ extension BrowserViewController {
             let item = NSMenuItem(title: Self.appName(app) + (isDefault ? "（默认）" : ""),
                                   action: #selector(openWithApplication(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = app
+            item.representedObject = OpenWithChoice(app: app, urls: urls)
             let icon = NSWorkspace.shared.icon(forFile: app.path(percentEncoded: false))
             icon.size = NSSize(width: 16, height: 16)
             item.image = icon
@@ -62,17 +62,18 @@ extension BrowserViewController {
         if !apps.isEmpty { menu.addItem(.separator()) }
         let other = NSMenuItem(title: "其他…", action: #selector(chooseApplicationToOpen(_:)), keyEquivalent: "")
         other.target = self
+        other.representedObject = OpenWithChoice(app: nil, urls: urls)
         menu.addItem(other)
         return menu
     }
 
     @objc func openWithApplication(_ sender: NSMenuItem) {
-        guard let app = sender.representedObject as? URL else { return }
-        open(selectedURLs, withApplication: app)
+        guard let choice = sender.representedObject as? OpenWithChoice, let app = choice.app else { return }
+        open(choice.urls, withApplication: app)
     }
 
     @objc func chooseApplicationToOpen(_ sender: Any?) {
-        let urls = selectedURLs
+        let urls = ((sender as? NSMenuItem)?.representedObject as? OpenWithChoice)?.urls ?? selectedURLs
         guard !urls.isEmpty, let window = view.window else { return }
         let panel = NSOpenPanel()
         panel.directoryURL = URL(filePath: "/Applications", directoryHint: .isDirectory)
@@ -94,5 +95,15 @@ extension BrowserViewController {
                 self?.presentErrors([FileOperationError(url: first, message: message)], title: "用「\(Self.appName(app))」打开失败")
             }
         }
+    }
+}
+
+/// 「打开方式」菜单项带上要打开的文件：浏览区和搜索结果列表都用这份菜单
+final class OpenWithChoice: NSObject {
+    let app: URL?
+    let urls: [URL]
+    init(app: URL?, urls: [URL]) {
+        self.app = app
+        self.urls = urls
     }
 }

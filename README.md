@@ -36,7 +36,8 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
   echo -n "top secret" > secret.txt && zip -q -P pw enc.zip secret.txt && rm secret.txt
   dd if=/dev/urandom of=big.bin bs=1m count=60
   ```
-- `HARBOR_SNAPSHOT_DIR=<目录>`：配合 m3 / m4 保存截图
+- `HARBOR_SCRIPT=m8`：图标视图（缩略图、选中同步、重命名、双击、右键）、主页、分类、智能分类、标签、边栏分组、回到真实目录。启动目录里要有 `a.txt`、`b.txt`、`folder/`、`pic.png`。分类查询用你主目录里真实的文件（只读）；桌面、文稿、下载要用户授权，脚本里跳过这三个目录
+- `HARBOR_SNAPSHOT_DIR=<目录>`：配合 m3 / m4 / m8 保存截图
 - 应用不在前台（你在用别的应用）时，只有 key window 才能测的菜单检查会标「跳过」，收起边栏的动画也不执行
 
 ## 签名和发布
@@ -52,6 +53,11 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
 ## 快捷键和命令（M3 起新增）
 
 - ⌘N 新建窗口，⌘T 新建标签页，⌘双击 / 右键「在新标签页中打开」；多选打开时文件夹各开一个后台标签页
+- ⌘1 图标视图（缩略图）、⌘2 列表视图，所有窗口共用
+- ⇧⌘F 主页：分类卡片（文档、图片、视频、音频、压缩包和自建的智能分类，显示数量）+ 最近打开的文件
+- ⌥⌘N 新建智能分类：文件名包含、类型、时间条件，可开「智能更新」；卡片右键可固定到快速访问、编辑、删除
+- ⌃⌘T 添加至 / 从快速访问移除（文件夹右键也有）
+- 边栏：主页、快速访问、存储位置（磁盘按树展开）、标签（按 Finder 标签查找）
 - 右键「打开方式」：列出能打开所选项目的应用（默认应用在前），「其他…」可以挑任意应用
 - 空格 / ⌘Y 快速查看（预览打开时方向键换文件，空格或 Esc 关闭）
 - ⌘\ 双栏，列表里 Tab 切到另一栏，F5 拷贝到另一栏，F6 移动到另一栏
@@ -74,11 +80,15 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
   - `FuzzyMatcher`、`PinyinKeys`：模糊匹配和拼音检索键
   - `VisitStore`、`JumpRanking`：访问记录（frecency，算法类似 zoxide）和快速跳转排序
   - `ShellIntegration`：终端的 zsh / bash 注入脚本、OSC 7 解析、路径转义
+  - `SmartQuery`：分类、标签、智能分类的条件拼成 Spotlight 查询；`SpotlightFilter` 过滤隐藏目录、node_modules、包内部的结果
   - `Archives`：用系统自带的 libarchive（3.7.4，带 zlib / xz / bzip2，没有 zstd）压缩、解压
 - `Sources/CArchive`：libarchive 的 C 声明。SDK 只有链接桩没有头文件，这里按官方 3.7.4 头文件声明用到的部分
 - `Sources/Harbor`：AppKit 界面（窗口、边栏、文件列表、地址栏、菜单）
   - `FileOperationCenter`：所有窗口共用的文件操作入口和撤销历史
   - `MainWindowController`：一个窗口 / 标签页（系统原生标签），边栏 + 一到两栏浏览区，菜单动作转给活动的那一栏
+  - `FileGridView`、`BrowserViewController+Grid`：图标视图，和列表共用数据，选中状态以列表为准（现成的文件操作不用改）；`ThumbnailProvider` 缓存缩略图
+  - `VirtualLocation`：主页、分类、标签、智能分类编码成 `harbor://` 地址，复用导航和前进后退；`QuickAccessStore`、`SmartCategoryStore` 存快速访问和智能分类
+  - `HomeViewController`、`QueryResultsViewController`、`SpotlightSearch`：主页和搜索结果。查询在后台队列上收集、过滤；只搜主目录下的一级文件夹（不含 ~/Library）。第一次搜桌面 / 文稿 / 下载时系统会请求授权，授权前显示「正在查找…」
   - `PanesContainer`：包住一到两栏浏览区，底部悬浮进度胶囊（NSGlassEffectView），双栏时也只有一份；胶囊显示时各栏列表留出底部余量，最后几行不会被挡住
   - `QuickPanel`：⌘K / ⌘P 共用的玻璃浮层；`CommandPalette`、`QuickJump` 提供内容
   - `AppDelegate`：启动、Sparkle 更新（菜单「检查更新…」；调试脚本运行时、`swift run` 时不启用）

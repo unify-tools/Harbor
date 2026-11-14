@@ -110,6 +110,18 @@ enum Preferences {
         set { defaults.set(Double(newValue), forKey: "terminalHeight") }
     }
 
+    enum ViewMode: String { case list, icons }
+    static let viewModeDidChange = Notification.Name("HarborViewModeDidChange")
+
+    /// 列表 / 图标视图，所有窗口共用
+    static var viewMode: ViewMode {
+        get { defaults.string(forKey: "viewMode").flatMap(ViewMode.init(rawValue:)) ?? .list }
+        set {
+            defaults.set(newValue.rawValue, forKey: "viewMode")
+            NotificationCenter.default.post(name: viewModeDidChange, object: nil)
+        }
+    }
+
     static var lastDirectory: URL? {
         get { defaults.string(forKey: "lastDirectory").map { URL(filePath: $0, directoryHint: .isDirectory) } }
         set { defaults.set(newValue?.path(percentEncoded: false), forKey: "lastDirectory") }

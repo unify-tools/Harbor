@@ -45,7 +45,23 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
-    var canGoUp: Bool { currentURL.pathKey != "/" }
+    var canGoUp: Bool { !isVirtual && currentURL.pathKey != "/" }
+
+    /// 主页、分类、标签、智能分类（harbor:// 地址）：内容换成主页或搜索结果，文件操作不可用
+    private(set) var virtualLocation: VirtualLocation?
+    var isVirtual: Bool { virtualLocation != nil }
+    /// 虚拟位置的内容：HomeViewController 或 QueryResultsViewController
+    private(set) var virtualContent: NSViewController?
+    var virtualResults: QueryResultsViewController? {
+        (virtualContent as? QueryResultsViewController) ?? (virtualContent as? HomeViewController)?.recent
+    }
+
+    /// 列表 / 图标，所有窗口共用一个设置
+    private(set) var viewMode = Preferences.viewMode
+    let gridView = FileGridView()
+    let gridScroll = NSScrollView()
+    /// 网格和列表互相同步选中状态时，避免来回触发
+    var isSyncingSelection = false
     var hasSelection: Bool { !tableView.selectedRowIndexes.isEmpty }
 
     private(set) var items: [FileItem] = []
@@ -74,8 +90,10 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     var bottomOverlap: CGFloat = 0 {
         didSet {
             guard bottomOverlap != oldValue else { return }
-            scrollView.automaticallyAdjustsContentInsets = false
-            scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomOverlap, right: 0)
+            for scroll in [scrollView, gridScroll] {
+                scroll.automaticallyAdjustsContentInsets = false
+                scroll.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomOverlap, right: 0)
+            }
         }
     }
     private let placeholder = PlaceholderView()
@@ -98,12 +116,13 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
+        configureGrid()
 
         pathBar.onNavigate = { [weak self] url in self?.navigate(to: url) }
         pathBar.onSubmit = { [weak self] text in self?.submitPath(text) ?? false }
         pathBar.completer = { [weak self] text in
             guard let self else { return nil }
-            return PathInput.complete(text, relativeTo: currentURL, showHidden: showHidden)
+            return PathInput.complete(text, relativeTo: directoryForInput, showHidden: showHidden)
         }
         pathBar.onEndEditing = { [weak self] in self?.focusList() }
         pathBar.onBeginEditing = { [weak self] in
@@ -113,7 +132,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         pathBar.onCopyPath = { [weak self] in self?.copyCurrentPath(nil) }
 
         placeholder.isHidden = true
-        for subview in [pathBar, scrollView, statusBar, placeholder] as [NSView] {
+        for subview in [pathBar, scrollView, gridScroll, statusBar, placeholder] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(subview)
         }
@@ -127,6 +146,10 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+            gridScroll.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            gridScroll.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            gridScroll.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            gridScroll.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
 
             statusBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -142,7 +165,40 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        applyViewMode()
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(viewModeDidChange), name: Preferences.viewModeDidChange, object: nil)
+        center.addObserver(self, selector: #selector(smartCategoriesDidChange), name: SmartCategoryStore.didChange, object: nil)
         navigate(to: currentURL)
+    }
+
+    @objc private func viewModeDidChange() {
+        guard viewMode != Preferences.viewMode else { return }
+        let hadFocus = view.window?.firstResponder === tableView || view.window?.firstResponder === gridView
+        viewMode = Preferences.viewMode
+        applyViewMode()
+        if hadFocus { focusList() }
+    }
+
+    /// 正在看的智能分类改了条件或名称：重新查询
+    @objc private func smartCategoriesDidChange() {
+        guard case .smart = virtualLocation else { return }
+        navigate(to: currentURL, recordHistory: false)
+    }
+
+    private func applyViewMode() {
+        let icons = viewMode == .icons
+        scrollView.isHidden = isVirtual || icons
+        gridScroll.isHidden = isVirtual || !icons
+        if icons {
+            gridView.reloadData()
+            syncGridFromTable(scroll: true)
+        }
+    }
+
+    /// 地址栏补全、输入相对路径时的基准目录
+    private var directoryForInput: URL {
+        isVirtual ? FileManager.default.homeDirectoryForCurrentUser : currentURL
     }
 
     override func viewDidAppear() {
@@ -222,16 +278,26 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     func focusList() {
-        view.window?.makeFirstResponder(tableView)
+        if isVirtual {
+            virtualResults?.focus()
+        } else {
+            view.window?.makeFirstResponder(viewMode == .icons ? gridView : tableView)
+        }
     }
 
     // MARK: - 导航
 
     func navigate(to url: URL, selecting names: [String] = [], recordHistory: Bool = true) {
-        let target = url.standardizedFileURL
+        let target = url.isVirtualLocation ? url : url.standardizedFileURL
         let previous = currentURL
         if recordHistory { history.visit(target) }
         currentURL = target
+        if let location = VirtualLocation(url: target) {
+            showVirtual(location)
+            delegate?.browserDidNavigate(self)
+            return
+        }
+        if isVirtual { hideVirtual() }
 
         // 回到上层（返回、上一级）时选中刚才所在的文件夹
         var selection = names
@@ -266,7 +332,77 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     func refresh() {
-        reload(selecting: nil, isNavigation: false)
+        if isVirtual {
+            navigate(to: currentURL, recordHistory: false)
+        } else {
+            reload(selecting: nil, isNavigation: false)
+        }
+    }
+
+    // MARK: - 虚拟位置
+
+    private func showVirtual(_ location: VirtualLocation) {
+        removeVirtualContent()
+        virtualLocation = location
+        watcher = nil
+        generation += 1
+        isLoading = false
+        items = []
+        tableView.reloadData()
+        gridView.reloadData()
+        placeholder.hide()
+        pathBar.showVirtual(title: location.title, symbol: location.symbol)
+        scrollView.isHidden = true
+        gridScroll.isHidden = true
+        statusBar.set(left: "", right: "")
+
+        let onCount: (Int, Bool) -> Void = { [weak self] count, finished in self?.updateVirtualStatus(count: count, finished: finished) }
+        let controller: NSViewController
+        if case .home = location {
+            let home = HomeViewController()
+            home.owner = self
+            home.onCountChange = onCount
+            controller = home
+        } else if let (query, live) = location.query {
+            let results = QueryResultsViewController(query, live: live)
+            results.owner = self
+            results.onCountChange = onCount
+            controller = results
+        } else {
+            placeholder.show(symbol: "questionmark.folder", message: "这个智能分类已经删除")
+            return
+        }
+        addChild(controller)
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(controller.view, positioned: .below, relativeTo: placeholder)
+        NSLayoutConstraint.activate([
+            controller.view.topAnchor.constraint(equalTo: pathBar.bottomAnchor),
+            controller.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+        ])
+        virtualContent = controller
+    }
+
+    private func hideVirtual() {
+        removeVirtualContent()
+        virtualLocation = nil
+        applyViewMode()
+    }
+
+    private func removeVirtualContent() {
+        (virtualContent as? HomeViewController)?.stop()
+        (virtualContent as? QueryResultsViewController)?.stop()
+        virtualContent?.view.removeFromSuperview()
+        virtualContent?.removeFromParent()
+        virtualContent = nil
+    }
+
+    private func updateVirtualStatus(count: Int, finished: Bool) {
+        let selected = virtualResults?.selectedCount ?? 0
+        var text = selected > 0 ? "已选择 \(selected) 项，共 \(count) 项" : "\(count) 项"
+        if !finished { text = "正在查找… " + text }
+        statusBar.set(left: text, right: "")
     }
 
     func beginEditingPath() {
@@ -275,7 +411,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     /// 地址栏回车：目录就进入，文件就进入所在目录并选中它
     private func submitPath(_ text: String) -> Bool {
-        guard let url = PathInput.resolve(text, relativeTo: currentURL) else { return false }
+        guard let url = PathInput.resolve(text, relativeTo: directoryForInput) else { return false }
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false), isDirectory: &isDir) else { return false }
         if isDir.boolValue, !FileTypes.isPackageExtension(url.pathExtension) {
@@ -289,7 +425,11 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     // MARK: - 打开
 
     func openSelection() {
-        open(rows: tableView.selectedRowIndexes)
+        if isVirtual {
+            virtualResults?.openSelection()
+        } else {
+            open(rows: tableView.selectedRowIndexes)
+        }
     }
 
     @objc private func openClicked(_ sender: Any?) {
@@ -379,10 +519,13 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             let keep = names ?? selectedNames()
             items = newItems
             tableView.reloadData()
+            if viewMode == .icons { gridView.reloadData() }
             select(names: keep, scroll: isNavigation)
             if isNavigation, tableView.selectedRowIndexes.isEmpty, !items.isEmpty {
                 tableView.scrollRowToVisible(0)
+                if viewMode == .icons { gridView.scroll(.zero) }
             }
+            if viewMode == .icons { syncGridFromTable(scroll: false) }
             if items.isEmpty {
                 placeholder.show(symbol: "folder", message: "空文件夹")
             } else {
@@ -402,6 +545,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             }
             items = []
             tableView.reloadData()
+            if viewMode == .icons { gridView.reloadData() }
             showError(error)
         }
 
@@ -453,12 +597,14 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.selectRowIndexes(indexes, byExtendingSelection: false)
         if scroll, let first = indexes.first {
             tableView.scrollRowToVisible(first)
+            if viewMode == .icons { syncGridFromTable(scroll: true) }
         }
     }
 
     // MARK: - 状态栏
 
     private func updateFreeSpace() {
+        guard !isVirtual else { return }
         let url = currentURL
         Task.detached(priority: .utility) {
             let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
@@ -514,6 +660,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        if viewMode == .icons, !isSyncingSelection { syncGridFromTable(scroll: false) }
         updateStatus()
         refreshQuickLook()
     }
