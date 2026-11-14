@@ -187,6 +187,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.target = self
         tableView.doubleAction = #selector(openClicked(_:))
         tableView.onReturn = { [weak self] in self?.beginRename() }
+        tableView.onSpace = { [weak self] in self?.toggleQuickLook(nil) }
         tableView.onFocus = { [weak self] in
             guard let self else { return }
             delegate?.browserDidBecomeActive(self)
@@ -514,6 +515,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         updateStatus()
+        refreshQuickLook()
     }
 
     /// 输入文件名快速定位（系统自带的 type-select），只按名称列匹配

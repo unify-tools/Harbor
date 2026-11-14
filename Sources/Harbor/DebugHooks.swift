@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 import HarborCore
 
 /// 验证用钩子，只在设置了对应环境变量时生效（release 构建也能用来测性能）：
@@ -154,6 +155,56 @@ enum SmokeScript {
         send("duplicate:")
         await wait()
         check(exists("folder/b 2.txt"), "复制出副本")
+
+        // 空格快速查看：打开、方向键换文件预览跟着变、再按空格关闭。第一次加载 Quick Look 较慢，轮询等待
+        func waitUntil(_ timeout: Double, _ condition: () -> Bool) async -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                if condition() { return true }
+                await wait(0.1)
+            }
+            return condition()
+        }
+        // 右键「打开方式」：默认应用排第一并标注，最后是「其他…」
+        select("b.txt")
+        let contextMenu = NSMenu()
+        browser.populateContextMenu(contextMenu, row: browser.tableView.selectedRow)
+        let openWith = contextMenu.items.first { $0.title == "打开方式" }?.submenu
+        let apps = openWith?.items.filter { $0.representedObject is URL } ?? []
+        let expectedDefault = NSWorkspace.shared.urlForApplication(toOpen: root.appending(path: "folder/b.txt"))?.standardizedFileURL
+        check(openWith != nil && (apps.first?.representedObject as? URL) == expectedDefault && apps.first?.title.hasSuffix("（默认）") == true
+              && apps.dropFirst().allSatisfy { !$0.title.hasSuffix("（默认）") } && openWith?.items.last?.title == "其他…",
+              "右键「打开方式」：\(apps.map(\.title))")
+
+        // 预览面板沿 key window 的响应链找控制者，应用在后台时没有 key window，测不了
+        if NSApp.isActive {
+            select("b.txt")
+            let space = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                         windowNumber: window.windowNumber, context: nil, characters: " ",
+                                         charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49)!
+            browser.tableView.keyDown(with: space)
+            let panel = QLPreviewPanel.shared()
+            let previewing = { (panel?.currentPreviewItem?.previewItemURL)?.lastPathComponent ?? "无" }
+            check(await waitUntil(5) { BrowserViewController.isQuickLookVisible && (panel?.dataSource as AnyObject?) === browser && previewing() == "b.txt" },
+                  "空格打开快速查看：\(previewing())")
+            select("b 2.txt")
+            check(await waitUntil(3) { previewing() == "b 2.txt" }, "换选中项后预览跟着变：\(previewing())")
+            browser.tableView.keyDown(with: space)
+            check(await waitUntil(3) { !BrowserViewController.isQuickLookVisible }, "再按空格关闭快速查看")
+            // 预览在前面时 ⌘Y 关闭：走真实的事件分发（菜单快捷键，动作沿主窗口的响应链找到这一栏）
+            browser.tableView.keyDown(with: space)
+            if await waitUntil(5, { BrowserViewController.isQuickLookVisible }), let panel {
+                let commandY = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                                                windowNumber: panel.windowNumber, context: nil, characters: "y",
+                                                charactersIgnoringModifiers: "y", isARepeat: false, keyCode: 16)!
+                NSApp.sendEvent(commandY)
+                check(await waitUntil(3) { !BrowserViewController.isQuickLookVisible }, "预览在前面时 ⌘Y 关闭快速查看")
+            } else {
+                check(false, "再次按空格打开快速查看")
+            }
+        } else {
+            FileHandle.standardError.write(Data("[smoke] 跳过 快速查看（应用不在前台）\n".utf8))
+        }
 
         finish(nil)
     }

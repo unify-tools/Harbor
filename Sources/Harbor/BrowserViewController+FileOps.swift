@@ -406,7 +406,11 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
         } else if row < 0 {
             tableView.deselectAll(nil)
         }
+        populateContextMenu(menu, row: row)
+    }
 
+    /// 右键菜单的内容。row < 0 表示点在空白处（拆出来方便调试脚本检查）
+    func populateContextMenu(_ menu: NSMenu, row: Int) {
         func add(_ title: String, _ action: Selector) {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
@@ -414,6 +418,9 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
         }
         if row >= 0 {
             add("打开", #selector(openFromMenu(_:)))
+            let openWith = NSMenuItem(title: "打开方式", action: nil, keyEquivalent: "")
+            openWith.submenu = makeOpenWithMenu(for: selectedURLs)
+            menu.addItem(openWith)
             if selectionHasFolder { add("在新标签页中打开", #selector(openInNewTab(_:))) }
             if selectionHasArchive {
                 add("解压", #selector(extractSelection(_:)))
@@ -453,6 +460,10 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         let count = tableView.selectedRowIndexes.count
+        // 预览开着时始终可用（用来关闭）。这时 key window 是预览面板，isEditingText 会误判成正在输入
+        if menuItem.action == #selector(toggleQuickLook(_:)) {
+            return Self.isQuickLookVisible || (count > 0 && !isEditingText)
+        }
         if isEditingText {
             // 文本框自己处理拷贝、粘贴，到不了这里；终端没有「剪切」，会落到这里，也要禁用
             switch menuItem.action {

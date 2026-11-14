@@ -196,6 +196,8 @@ final class FileTableView: NSTableView {
     var onFocus: (() -> Void)?
     /// 返回 false 时按系统默认处理
     var onTab: (() -> Bool)?
+    /// 空格：快速查看
+    var onSpace: (() -> Void)?
 
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
@@ -208,6 +210,11 @@ final class FileTableView: NSTableView {
         // 36 = Return，76 = 小键盘 Enter
         if (event.keyCode == 36 || event.keyCode == 76), modifiers.isEmpty, let onReturn {
             onReturn()
+            return
+        }
+        // 49 = 空格：快速查看（和 Finder 一样，不参与输入定位）
+        if event.keyCode == 49, modifiers.isEmpty, let onSpace {
+            onSpace()
             return
         }
         // 48 = Tab，带不带 ⇧ 都切换（只有两栏）

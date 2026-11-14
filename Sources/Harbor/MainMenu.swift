@@ -38,6 +38,7 @@ enum MainMenu {
             ]),
             item("解压", #selector(BrowserViewController.extractSelection(_:))),
             item("用默认应用打开", #selector(BrowserViewController.openWithDefaultApp(_:))),
+            item("快速查看", #selector(BrowserViewController.toggleQuickLook(_:)), "y"),
             .separator(),
             item("移到废纸篓", #selector(BrowserViewController.moveToTrash(_:)), "\u{8}"),
             item("立即删除…", #selector(BrowserViewController.deleteImmediately(_:)), "\u{8}", [.command, .option]),
