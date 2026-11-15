@@ -22,6 +22,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         MainWindowController(url: startURL()).showWindow(nil)
         NSApp.activate()
         SmokeScript.runIfRequested()
+        // 用过主页的话，启动几秒后在后台把默认分类和「最近」查好，进主页时直接有结果
+        if ProcessInfo.processInfo.environment["HARBOR_SCRIPT"] == nil {
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                SpotlightCache.shared.prefetchIfUsed()
+            }
+        }
     }
 
     @objc func checkForUpdates(_ sender: Any?) {

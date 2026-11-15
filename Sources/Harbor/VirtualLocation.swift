@@ -8,6 +8,8 @@ enum VirtualLocation: Equatable {
     case category(SmartQuery.Kind)
     case tag(String)
     case smart(UUID)
+    /// 快速搜索：文件名包含 text；scope 是在哪个文件夹里搜（含子文件夹），nil 表示所有位置
+    case search(String, scope: URL?)
 
     static let scheme = "harbor"
 
@@ -23,6 +25,12 @@ enum VirtualLocation: Equatable {
         case "smart":
             guard let id = UUID(uuidString: value) else { return nil }
             self = .smart(id)
+        case "search":
+            // 搜索文字放在参数里：里面可能有 /，放在路径里会被拆开
+            let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            guard let text = items.first(where: { $0.name == "q" })?.value, !text.isEmpty else { return nil }
+            let scope = items.first { $0.name == "in" }?.value
+            self = .search(text, scope: scope.map { URL(filePath: $0, directoryHint: .isDirectory) })
         default: return nil
         }
     }
@@ -35,6 +43,10 @@ enum VirtualLocation: Equatable {
         case .category(let kind): components.host = "category"; components.path = "/" + kind.rawValue
         case .tag(let name): components.host = "tag"; components.path = "/" + name
         case .smart(let id): components.host = "smart"; components.path = "/" + id.uuidString
+        case .search(let text, let scope):
+            components.host = "search"
+            components.queryItems = [URLQueryItem(name: "q", value: text)]
+                + (scope.map { [URLQueryItem(name: "in", value: $0.path(percentEncoded: false))] } ?? [])
         }
         return components.url!
     }
@@ -45,6 +57,8 @@ enum VirtualLocation: Equatable {
         case .category(let kind): kind.title
         case .tag(let name): name
         case .smart(let id): SmartCategoryStore.shared.category(id)?.name ?? "智能分类"
+        case .search(let text, let scope):
+            scope.map { "在“\(FileManager.default.displayName(atPath: $0.path(percentEncoded: false)))”中搜索“\(text)”" } ?? "搜索“\(text)”"
         }
     }
 
@@ -54,6 +68,7 @@ enum VirtualLocation: Equatable {
         case .category(let kind): kind.symbol
         case .tag: "tag"
         case .smart: "sparkle.magnifyingglass"
+        case .search: "magnifyingglass"
         }
     }
 
@@ -65,6 +80,7 @@ enum VirtualLocation: Equatable {
         case .tag(let name): (SmartQuery(tag: name), true)
         case .smart(let id):
             SmartCategoryStore.shared.category(id).map { ($0.query, $0.autoUpdate) }
+        case .search: nil
         }
     }
 }

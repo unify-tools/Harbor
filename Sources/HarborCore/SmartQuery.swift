@@ -129,6 +129,11 @@ public struct SmartQuery: Codable, Sendable, Hashable {
         return clauses.joined(separator: " && ")
     }
 
+    /// 快速搜索：文件名包含这段文字（不区分大小写和变音符号），文件夹也算
+    public static func nameSearchString(_ text: String) -> String {
+        #"kMDItemFSName == "*\#(escape(text.trimmingCharacters(in: .whitespacesAndNewlines)))*"cd"#
+    }
+
     /// 查询字符串里的引号、反斜杠、通配符 * 要转义，否则用户输入能改写查询
     static func escape(_ text: String) -> String {
         var result = ""

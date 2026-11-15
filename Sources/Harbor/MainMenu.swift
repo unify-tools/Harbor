@@ -23,6 +23,7 @@ enum MainMenu {
             item("新建标签页", #selector(NSResponder.newWindowForTab(_:)), "t"),
             item("新建文件夹", #selector(BrowserViewController.newFolder(_:)), "n", [.command, .shift]),
             item("新建智能分类…", #selector(BrowserViewController.newSmartCategory(_:)), "n", [.command, .option]),
+            item("搜索…", #selector(MainWindowController.focusSearch(_:)), "f"),
             .separator(),
             item("打开", #selector(MainWindowController.openSelection(_:)), "o"),
             item("在新标签页中打开", #selector(BrowserViewController.openInNewTab(_:))),

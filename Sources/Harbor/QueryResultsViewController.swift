@@ -16,12 +16,33 @@ final class QueryResultsViewController: NSViewController, NSTableViewDataSource,
     let tableView = FileTableView()
     private let placeholder = PlaceholderView()
     private let search: SpotlightSearch
+    /// 自己开的查询离开时停掉；共享的（SpotlightCache）留着给下次用
+    private let ownsSearch: Bool
     private(set) var results: [SpotlightSearch.Result] = []
     private(set) var isFinished = false
     private let showsDateColumnAs: String
 
-    init(_ query: SmartQuery, live: Bool, sortBy: SpotlightSearch.SortKey = .modified, limit: Int? = nil) {
-        search = SpotlightSearch(query, live: live, sortBy: sortBy, limit: limit)
+    /// 自己开一个查询（不自动更新的智能分类）
+    convenience init(_ query: SmartQuery, live: Bool, sortBy: SpotlightSearch.SortKey = .modified, limit: Int? = nil) {
+        self.init(search: SpotlightSearch(query, live: live, sortBy: sortBy, limit: limit), owns: true, sortBy: sortBy)
+    }
+
+    /// 用一个现成的、归这个列表管的查询（快速搜索）
+    convenience init(owning search: SpotlightSearch) {
+        self.init(search: search, owns: true, sortBy: .modified)
+    }
+
+    /// 没有结果时占位上的按钮（快速搜索：「在所有位置中搜索」）
+    var emptyAction: (title: String, handler: () -> Void)?
+
+    /// 用共享的常驻查询：已经有结果时进来就显示，不重新搜
+    convenience init(shared search: SpotlightSearch, sortBy: SpotlightSearch.SortKey = .modified) {
+        self.init(search: search, owns: false, sortBy: sortBy)
+    }
+
+    private init(search: SpotlightSearch, owns: Bool, sortBy: SpotlightSearch.SortKey) {
+        self.search = search
+        ownsSearch = owns
         showsDateColumnAs = sortBy == .lastUsed ? "上次打开" : "修改日期"
         super.init(nibName: nil, bundle: nil)
     }
@@ -89,12 +110,18 @@ final class QueryResultsViewController: NSViewController, NSTableViewDataSource,
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        search.onUpdate = { [weak self] results, finished in self?.apply(results, finished: finished) }
+        NotificationCenter.default.addObserver(self, selector: #selector(searchDidUpdate), name: SpotlightSearch.didUpdate, object: search)
+        if search.isFinished || !search.results.isEmpty { apply(search.results, finished: search.isFinished) }
         search.start()
     }
 
+    @objc private func searchDidUpdate() {
+        apply(search.results, finished: search.isFinished)
+    }
+
     func stop() {
-        search.stop()
+        NotificationCenter.default.removeObserver(self, name: SpotlightSearch.didUpdate, object: search)
+        if ownsSearch { search.stop() }
     }
 
     private func apply(_ newResults: [SpotlightSearch.Result], finished: Bool) {
@@ -106,7 +133,8 @@ final class QueryResultsViewController: NSViewController, NSTableViewDataSource,
         if !results.isEmpty {
             placeholder.hide()
         } else if finished {
-            placeholder.show(symbol: "doc.text.magnifyingglass", message: "没有找到文件")
+            placeholder.show(symbol: "doc.text.magnifyingglass", message: "没有找到文件",
+                             buttonTitle: emptyAction?.title, action: emptyAction?.handler)
         }
         onCountChange?(results.count, finished)
         refreshQuickLook()

@@ -339,6 +339,23 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
+    // MARK: - 快速搜索
+
+    /// 工具栏搜索框：在当前文件夹（含子文件夹）里按文件名搜；在主页、分类里搜就搜所有位置。
+    /// 连续输入只替换当前这条搜索，不留一串历史；清空回到搜索前的位置
+    func search(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if case .search(_, let scope) = virtualLocation {
+            if trimmed.isEmpty {
+                goBack()
+            } else {
+                navigate(to: VirtualLocation.search(trimmed, scope: scope).url, recordHistory: false)
+            }
+        } else if !trimmed.isEmpty {
+            navigate(to: VirtualLocation.search(trimmed, scope: isVirtual ? nil : currentURL).url)
+        }
+    }
+
     // MARK: - 虚拟位置
 
     private func showVirtual(_ location: VirtualLocation) {
@@ -363,8 +380,21 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             home.owner = self
             home.onCountChange = onCount
             controller = home
+        } else if case .search(let text, let scope) = location {
+            let search = SpotlightSearch(queryString: SmartQuery.nameSearchString(text), scopes: scope.map { [$0] }, live: true)
+            let results = QueryResultsViewController(owning: search)
+            if scope != nil {
+                results.emptyAction = ("在所有位置中搜索", { [weak self] in
+                    self?.navigate(to: VirtualLocation.search(text, scope: nil).url, recordHistory: false)
+                })
+            }
+            results.owner = self
+            results.onCountChange = onCount
+            controller = results
         } else if let (query, live) = location.query {
-            let results = QueryResultsViewController(query, live: live)
+            // 实时更新的用共享的常驻查询，再次进来不用重新搜
+            let results = live ? QueryResultsViewController(shared: SpotlightCache.shared.search(query))
+                               : QueryResultsViewController(query, live: false)
             results.owner = self
             results.onCountChange = onCount
             controller = results
@@ -401,7 +431,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     private func updateVirtualStatus(count: Int, finished: Bool) {
         let selected = virtualResults?.selectedCount ?? 0
         var text = selected > 0 ? "已选择 \(selected) 项，共 \(count) 项" : "\(count) 项"
-        if !finished { text = "正在查找… " + text }
+        // 先显示的是上次的快照时写「正在更新」，还什么都没有时写「正在查找」
+        if !finished { text = (count > 0 ? "正在更新… " : "正在查找… ") + text }
         statusBar.set(left: text, right: "")
     }
 

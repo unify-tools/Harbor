@@ -11,8 +11,9 @@ final class HomeViewController: NSViewController {
 
     private let cardsView = CardsView()
     private(set) var recent: QueryResultsViewController!
-    /// 卡片上的数量：每张卡片一个一次性查询
+    /// 不自动更新的智能分类的一次性计数查询（共享的常驻查询不在这里）
     private var counters: [SpotlightSearch] = []
+    private var cardObservers: [NSObjectProtocol] = []
 
     static var recentLimit: Int {
         let value = UserDefaults.standard.integer(forKey: "homeRecentLimit")
@@ -20,7 +21,8 @@ final class HomeViewController: NSViewController {
     }
 
     override func loadView() {
-        recent = QueryResultsViewController(.recent, live: true, sortBy: .lastUsed, limit: Self.recentLimit)
+        recent = QueryResultsViewController(shared: SpotlightCache.shared.search(.recent, sortBy: .lastUsed, limit: Self.recentLimit),
+                                            sortBy: .lastUsed)
         recent.owner = owner
         recent.onCountChange = { [weak self] count, finished in self?.onCountChange?(count, finished) }
         addChild(recent)
@@ -58,7 +60,15 @@ final class HomeViewController: NSViewController {
     func stop() {
         counters.forEach { $0.stop() }
         counters = []
+        cardObservers.forEach(NotificationCenter.default.removeObserver)
+        cardObservers = []
         recent.stop()
+    }
+
+    /// 卡片上次的数量，按位置地址记
+    static var savedCounts: [String: Int] {
+        get { UserDefaults.standard.dictionary(forKey: "homeCardCounts") as? [String: Int] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "homeCardCounts") }
     }
 
     @objc private func categoriesChanged() {
@@ -70,6 +80,8 @@ final class HomeViewController: NSViewController {
     private func reloadCards() {
         counters.forEach { $0.stop() }
         counters = []
+        cardObservers.forEach(NotificationCenter.default.removeObserver)
+        cardObservers = []
         var cards: [CardView] = SmartQuery.Kind.allCases.map { kind in
             CardView(title: kind.title, symbol: kind.symbol, tint: kind.tint, location: .category(kind))
         }
@@ -82,13 +94,23 @@ final class HomeViewController: NSViewController {
                 if let location { self?.owner?.navigate(to: location.url) }
             }
             card.menuProvider = { [weak self] location in self?.menu(for: location) }
-            guard let (query, _) = card.location?.query else { continue }
-            let counter = SpotlightSearch(query, live: false, countOnly: true)
-            counter.onUpdate = { [weak card, weak counter] _, finished in
-                if finished, let counter { card?.detail = "\(counter.count) 项" }
+            guard let location = card.location, let (query, live) = location.query else { continue }
+            // 共享的常驻查询（默认分类、智能更新的分类）进来就有数；不自动更新的分类每次数一遍
+            let search = live ? SpotlightCache.shared.search(query) : SpotlightSearch(query, live: false, countOnly: true)
+            if !live { counters.append(search) }
+            let key = location.url.absoluteString
+            let show: @MainActor @Sendable () -> Void = { [weak card, weak search] in
+                guard let card, let search, search.isFinished else { return }
+                card.detail = "\(search.count) 项"
+                Self.savedCounts[key] = search.count
             }
-            counter.start()
-            counters.append(counter)
+            // 还没数完时先显示上次记下的数（重启 app 后第一次进主页也不用干等）
+            if let saved = Self.savedCounts[key] { card.detail = "\(saved) 项" }
+            show()
+            cardObservers.append(NotificationCenter.default.addObserver(forName: SpotlightSearch.didUpdate, object: search, queue: .main) { _ in
+                MainActor.assumeIsolated { show() }
+            })
+            search.start()
         }
         let add = CardView(title: "新建智能分类", symbol: "plus", tint: .secondaryLabelColor, location: nil)
         add.onOpen = { [weak self] _ in self?.owner?.newSmartCategory(nil) }

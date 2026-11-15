@@ -43,6 +43,13 @@ import Testing
         }
     }
 
+    @Test func nameSearch() {
+        #expect(SmartQuery.nameSearchString(" 报告 ") == #"kMDItemFSName == "*报告*"cd"#)
+        let tricky = SmartQuery.nameSearchString(#"a"*b"#)
+        #expect(tricky == #"kMDItemFSName == "*a\"\*b*"cd"#)
+        #expect(NSPredicate(fromMetadataQueryString: tricky) != nil)
+    }
+
     @Test func codableRoundTrip() throws {
         let category = SmartCategory(name: "本周报告", query: SmartQuery(keyword: "报告", kinds: [.document], range: .week), autoUpdate: false)
         let decoded = try JSONDecoder().decode(SmartCategory.self, from: JSONEncoder().encode(category))

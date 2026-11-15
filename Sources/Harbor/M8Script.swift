@@ -41,10 +41,17 @@ enum M8Script {
         let hadQuickAccess = UserDefaults.standard.object(forKey: "quickAccess") != nil
         let categoriesFile = URL.applicationSupportDirectory.appending(path: "Harbor/smart-categories.json")
         let hadCategoriesFile = fm.fileExists(atPath: categoriesFile.path)
-        defer {
-            Preferences.viewMode = originalMode
+        let hadCardCounts = UserDefaults.standard.object(forKey: "homeCardCounts") != nil
+        // 快照存到测试目录里，和真实的缓存隔开
+        let snapshotDirectory = root.appending(path: ".snapshots", directoryHint: .isDirectory)
+        SpotlightCache.shared.snapshotDirectory = snapshotDirectory
+        let hadViewMode = UserDefaults.standard.object(forKey: "viewMode") != nil
+        // SmokeScript.finish 直接 exit()，defer 不会执行，所以结束前显式调用
+        func cleanUp() {
+            if hadViewMode { Preferences.viewMode = originalMode } else { UserDefaults.standard.removeObject(forKey: "viewMode") }
             if !hadQuickAccess { UserDefaults.standard.removeObject(forKey: "quickAccess") }
             if !hadCategoriesFile { try? fm.removeItem(at: categoriesFile) }
+            if !hadCardCounts { UserDefaults.standard.removeObject(forKey: "homeCardCounts") }
         }
 
         // MARK: 图标视图
@@ -118,9 +125,45 @@ enum M8Script {
         tab.window?.close()
         await wait(0.3)
 
+        // 再进主页：用常驻查询，卡片立刻有数，不重新搜
+        let imageSearch = SpotlightCache.shared.search(.category(.image))
+        // 卡片在查询完成前会先显示偏好里记的旧数，所以等查询本身完成，不看卡片文字
+        check(await waitUntil(30) { SmartQuery.Kind.allCases.allSatisfy { SpotlightCache.shared.search(.category($0)).isFinished } },
+              "所有默认分类查询完成：\(home?.cards.map(\.detail) ?? [])")
+        await wait(0.3)
+        check(HomeViewController.savedCounts[VirtualLocation.category(.image).url.absoluteString] == imageSearch.count,
+              "卡片数量记进偏好：\(imageSearch.count)")
+        browser.navigate(to: root)
+        await wait(0.3)
+        browser.navigate(to: VirtualLocation.home.url)
+        let homeAgain = browser.virtualContent as? HomeViewController
+        check(homeAgain !== home && homeAgain?.cards.filter { $0.location != nil }.allSatisfy { $0.detail.hasSuffix("项") } == true
+              && SpotlightCache.shared.search(.category(.image)) === imageSearch,
+              "再进主页卡片立刻有数（同一个常驻查询）：\(homeAgain?.cards.map(\.detail) ?? [])")
+        check(homeAgain?.recent.isFinished == true, "再进主页「最近」立刻有结果：\(homeAgain?.recent.results.count ?? -1) 项")
+
+        // 结果快照：模拟重启 app（内存里的查询丢掉），再进分类页先显示快照，查询完成后换成最新的
+        SpotlightCache.shared.saveAllNow()
+        let snapshotCount = ((try? fm.contentsOfDirectory(atPath: snapshotDirectory.path)) ?? []).count
+        check(snapshotCount >= SmartQuery.Kind.allCases.count + 1, "常驻查询的结果存成快照：\(snapshotCount) 个")
+        SpotlightCache.shared.removeAllSearches()
+        browser.navigate(to: VirtualLocation.category(.image).url)
+        let restored = browser.virtualContent as? QueryResultsViewController
+        check(restored?.isFinished == false && restored?.results.count == imageSearch.count,
+              "重启后进图片分类先显示快照：\(restored?.results.count ?? -1) 项（查询未完成）")
+        check(await waitUntil(30) { restored?.isFinished == true } && restored?.results.count == imageSearch.count, "查询完成后换成最新结果")
+        SpotlightCache.shared.removeAllSearches()
+        SpotlightCache.shared.prefetchIfUsed()
+        check(SpotlightCache.shared.contains(.category(.image)) && SpotlightCache.shared.contains(.recent), "用过主页时启动预热默认分类和最近")
+        browser.navigate(to: root)
+        await wait(0.3)
+        let imageSearchNow = SpotlightCache.shared.search(.category(.image))
+        _ = await waitUntil(30) { imageSearchNow.isFinished }
+
         // MARK: 分类（真实的 Spotlight 查询）
         browser.navigate(to: VirtualLocation.category(.image).url)
         let images = browser.virtualContent as? QueryResultsViewController
+        check(images?.isFinished == true && images?.results.count == imageSearchNow.count, "从主页点进图片分类立刻有结果（不重新搜）")
         check(await waitUntil(30) { images?.isFinished == true }, "图片分类查询完成")
         let imageResults = images?.results ?? []
         snapshot("images")
@@ -158,6 +201,19 @@ enum M8Script {
         check(SmartCategoryEditor.Form.automaticName(for: SmartQuery(keyword: "报告", kinds: [.document], range: .week)) == "近 7 天修改的名称含“报告”的文档",
               "智能分类自动命名")
 
+        // 智能更新的分类用常驻查询；删掉后查询跟着停掉
+        let liveCategory = SmartCategory(name: "测试实时", query: SmartQuery(keyword: "harbor-m8-不存在", kinds: [.image]), autoUpdate: true)
+        SmartCategoryStore.shared.save(liveCategory)
+        browser.navigate(to: VirtualLocation.smart(liveCategory.id).url)
+        let liveResults = browser.virtualContent as? QueryResultsViewController
+        check(await waitUntil(15) { liveResults?.isFinished == true } && SpotlightCache.shared.contains(liveCategory.query),
+              "智能更新的分类用常驻查询")
+        browser.navigate(to: root)
+        SmartCategoryStore.shared.remove(liveCategory.id)
+        await wait(0.3)
+        check(!SpotlightCache.shared.contains(liveCategory.query) && SpotlightCache.shared.contains(.category(.image)),
+              "删掉分类后它的常驻查询停掉，默认分类的留着")
+
         // MARK: 标签
         if let tag = NSWorkspace.shared.fileLabels.dropFirst().first {
             browser.navigate(to: VirtualLocation.tag(tag).url)
@@ -182,6 +238,37 @@ enum M8Script {
             sidebar.outlineView.collapseItem(volume)
         }
 
+        // MARK: 快速搜索
+        let tricky = VirtualLocation.search("a/b?c&d=“中”", scope: root)
+        check(VirtualLocation(url: tricky.url) == tricky, "搜索文字里有 / ? & 时地址能还原：\(tricky.url.absoluteString)")
+        browser.navigate(to: root)
+        await wait()
+        browser.search("harbor-m8-不存在")
+        var searchScope: URL?? = .none
+        if case .search(_, let scope) = browser.virtualLocation { searchScope = scope }
+        check(searchScope == .some(root), "在文件夹里搜索默认搜这个文件夹：\(String(describing: searchScope))")
+        let missing = browser.virtualContent as? QueryResultsViewController
+        check(await waitUntil(15) { missing?.isFinished == true } && missing?.results.isEmpty == true && missing?.emptyAction != nil,
+              "搜不到时提供「在所有位置中搜索」")
+        missing?.emptyAction?.handler()
+        if case .search(_, let scope) = browser.virtualLocation { searchScope = scope } else { searchScope = .none }
+        check(searchScope == .some(nil), "切到在所有位置中搜索")
+        if let field = controller.searchItem?.searchField {
+            field.stringValue = "PanesContainer"
+            controller.searchFieldChanged(field)
+            let found = browser.virtualContent as? QueryResultsViewController
+            check(await waitUntil(20) { found?.isFinished == true } && found?.results.contains { $0.name == "PanesContainer.swift" } == true
+                  && window.title == "搜索“PanesContainer”",
+                  "搜索框按文件名搜到项目里的文件：\(found?.results.prefix(3).map(\.name) ?? [])")
+            field.stringValue = ""
+            controller.searchFieldChanged(field)
+            await wait(0.3)
+            check(!browser.isVirtual && browser.currentURL.pathKey == root.pathKey && field.stringValue.isEmpty,
+                  "清空搜索框回到搜索前的文件夹（连续输入不留历史）")
+        } else {
+            check(false, "工具栏里没有搜索框")
+        }
+
         // MARK: 回到真实目录
         browser.navigate(to: root)
         await wait()
@@ -190,6 +277,7 @@ enum M8Script {
         fm.createFile(atPath: root.appending(path: "new.txt").path, contents: Data())
         check(await waitUntil(4) { index("new.txt") != nil }, "回到文件夹后目录监听照常工作")
 
+        cleanUp()
         SmokeScript.finish(nil)
     }
 

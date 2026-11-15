@@ -6,6 +6,7 @@ private extension NSToolbarItem.Identifier {
     static let forward = Self("forward")
     static let dualPane = Self("dualPane")
     static let terminal = Self("terminal")
+    static let search = Self("search")
 }
 
 /// 一个窗口（或一个标签页）= 边栏 + 工作区；工作区上面是一到两个浏览区，下面是可收起的终端。
@@ -212,6 +213,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
     }
 
+    /// 工具栏的搜索框（快速搜索文件）
+    private(set) weak var searchItem: NSSearchToolbarItem?
+
+    @objc func searchFieldChanged(_ sender: NSSearchField) {
+        activeBrowser.search(sender.stringValue)
+    }
+
+    /// ⌘F
+    @objc func focusSearch(_ sender: Any?) {
+        searchItem?.beginSearchInteraction()
+    }
+
     /// 工具栏按钮：单纯的显示 / 收起（点按钮时焦点不在终端，⌃` 的「先聚焦」不适用）
     @objc private func terminalButtonClicked(_ sender: Any?) {
         if isTerminalVisible { hideTerminal() } else { showTerminal() }
@@ -270,6 +283,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private func updateForActiveBrowser() {
         let url = activeBrowser.currentURL
         sidebar.reveal(url)
+        // 搜索框跟着当前位置：在搜索结果里显示搜的文字，离开搜索就清空
+        if let field = searchItem?.searchField {
+            var text = ""
+            if case .search(let searching, _) = VirtualLocation(url: url) { text = searching }
+            if field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) != text { field.stringValue = text }
+        }
         if let location = VirtualLocation(url: url) {
             // 主页、分类没有对应的目录：标题用名称，终端不跟着跳
             window?.title = location.title
@@ -432,7 +451,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     // MARK: - 工具栏
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .back, .forward, .flexibleSpace, .dualPane, .terminal]
+        [.toggleSidebar, .sidebarTrackingSeparator, .back, .forward, .flexibleSpace, .dualPane, .terminal, .search]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -455,6 +474,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             return actionItem(identifier, symbol: "rectangle.split.2x1", label: "双栏", action: #selector(toggleDualPane(_:)))
         case .terminal:
             return actionItem(identifier, symbol: "apple.terminal", label: "终端", action: #selector(terminalButtonClicked(_:)))
+        case .search:
+            let item = NSSearchToolbarItem(itemIdentifier: identifier)
+            item.label = "搜索"
+            item.searchField.placeholderString = "搜索文件名"
+            // 输入停顿一下再搜（系统默认的节奏），不是每个字都搜
+            item.searchField.sendsSearchStringImmediately = false
+            item.searchField.target = self
+            item.searchField.action = #selector(searchFieldChanged(_:))
+            searchItem = item
+            return item
         default:
             return nil
         }

@@ -36,7 +36,7 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
   echo -n "top secret" > secret.txt && zip -q -P pw enc.zip secret.txt && rm secret.txt
   dd if=/dev/urandom of=big.bin bs=1m count=60
   ```
-- `HARBOR_SCRIPT=m8`：图标视图（缩略图、选中同步、重命名、双击、右键）、主页、分类、智能分类、标签、边栏分组、回到真实目录。启动目录里要有 `a.txt`、`b.txt`、`folder/`、`pic.png`。分类查询用你主目录里真实的文件（只读）；桌面、文稿、下载要用户授权，脚本里跳过这三个目录
+- `HARBOR_SCRIPT=m8`：图标视图（缩略图、选中同步、重命名、双击、右键）、主页、分类、常驻查询和快照、智能分类、标签、快速搜索、边栏分组、回到真实目录。快照写在启动目录的 `.snapshots/` 里，测试改过的偏好结束前恢复。启动目录里要有 `a.txt`、`b.txt`、`folder/`、`pic.png`。分类查询用你主目录里真实的文件（只读）；桌面、文稿、下载要用户授权，脚本里跳过这三个目录
 - `HARBOR_SNAPSHOT_DIR=<目录>`：配合 m3 / m4 / m8 保存截图
 - 应用不在前台（你在用别的应用）时，只有 key window 才能测的菜单检查会标「跳过」，收起边栏的动画也不执行
 
@@ -53,6 +53,7 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
 ## 快捷键和命令（M3 起新增）
 
 - ⌘N 新建窗口，⌘T 新建标签页，⌘双击 / 右键「在新标签页中打开」；多选打开时文件夹各开一个后台标签页
+- ⌘F 快速搜索：工具栏搜索框按文件名搜（含文件夹），在文件夹里默认搜这个文件夹及子文件夹，搜不到可以一键改成所有位置；清空回到原来的位置
 - ⌘1 图标视图（缩略图）、⌘2 列表视图，所有窗口共用
 - ⇧⌘F 主页：分类卡片（文档、图片、视频、音频、压缩包和自建的智能分类，显示数量）+ 最近打开的文件
 - ⌥⌘N 新建智能分类：文件名包含、类型、时间条件，可开「智能更新」；卡片右键可固定到快速访问、编辑、删除
@@ -88,6 +89,7 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
   - `MainWindowController`：一个窗口 / 标签页（系统原生标签），边栏 + 一到两栏浏览区，菜单动作转给活动的那一栏
   - `FileGridView`、`BrowserViewController+Grid`：图标视图，和列表共用数据，选中状态以列表为准（现成的文件操作不用改）；`ThumbnailProvider` 缓存缩略图
   - `VirtualLocation`：主页、分类、标签、智能分类编码成 `harbor://` 地址，复用导航和前进后退；`QuickAccessStore`、`SmartCategoryStore` 存快速访问和智能分类
+  - `SpotlightCache`：默认分类、最近、标签、智能更新的分类用常驻查询（运行期间不重复搜，Spotlight 增量推送变化，更新合并成每秒最多一次）；结果快照存在 `~/Library/Caches/dev.lakes.harbor/spotlight`，重启后先显示快照再换成最新结果；用过主页的话启动 3 秒后预热。卡片数量另存在偏好 `homeCardCounts`
   - `HomeViewController`、`QueryResultsViewController`、`SpotlightSearch`：主页和搜索结果。查询在后台队列上收集、过滤；只搜主目录下的一级文件夹（不含 ~/Library）。第一次搜桌面 / 文稿 / 下载时系统会请求授权，授权前显示「正在查找…」
   - `PanesContainer`：包住一到两栏浏览区，底部悬浮进度胶囊（NSGlassEffectView），双栏时也只有一份；胶囊显示时各栏列表留出底部余量，最后几行不会被挡住
   - `QuickPanel`：⌘K / ⌘P 共用的玻璃浮层；`CommandPalette`、`QuickJump` 提供内容
