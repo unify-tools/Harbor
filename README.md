@@ -54,6 +54,7 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
 
 - ⌘N 新建窗口，⌘T 新建标签页，⌘双击 / 右键「在新标签页中打开」；多选打开时文件夹各开一个后台标签页
 - ⌘F 快速搜索：工具栏搜索框按文件名搜（含文件夹），在文件夹里默认搜这个文件夹及子文件夹，搜不到可以一键改成所有位置；清空回到原来的位置
+- 分组方式（显示 → 分组方式，或工具栏的分组按钮）：无 / 名称 / 种类 / 应用程序 / 上次打开日期 / 添加日期 / 修改日期 / 创建日期 / 大小 / 标签。列表里每组一行吸顶的组标题，图标视图每组一个分区；所有窗口共用
 - ⌘1 图标视图（缩略图）、⌘2 列表视图，所有窗口共用
 - ⇧⌘F 主页：分类卡片（文档、图片、视频、音频、压缩包和自建的智能分类，显示数量）+ 最近打开的文件
 - ⌥⌘N 新建智能分类：文件名包含、类型、时间条件，可开「智能更新」；卡片右键可固定到快速访问、编辑、删除
@@ -81,12 +82,14 @@ swift run -c release HarborBench read <目录>          # 读目录、排序耗�
   - `FuzzyMatcher`、`PinyinKeys`：模糊匹配和拼音检索键
   - `VisitStore`、`JumpRanking`：访问记录（frecency，算法类似 zoxide）和快速跳转排序
   - `ShellIntegration`：终端的 zsh / bash 注入脚本、OSC 7 解析、路径转义
+  - `FileGrouper`：分组（组按固定顺序：日期新的在前、大的在前、名称按字母，组内保持排序）。上次打开（Spotlight）、添加日期、标签只在选了对应分组时读
   - `SmartQuery`：分类、标签、智能分类的条件拼成 Spotlight 查询；`SpotlightFilter` 过滤隐藏目录、node_modules、包内部的结果
   - `Archives`：用系统自带的 libarchive（3.7.4，带 zlib / xz / bzip2，没有 zstd）压缩、解压
 - `Sources/CArchive`：libarchive 的 C 声明。SDK 只有链接桩没有头文件，这里按官方 3.7.4 头文件声明用到的部分
 - `Sources/Harbor`：AppKit 界面（窗口、边栏、文件列表、地址栏、菜单）
   - `FileOperationCenter`：所有窗口共用的文件操作入口和撤销历史
   - `MainWindowController`：一个窗口 / 标签页（系统原生标签），边栏 + 一到两栏浏览区，菜单动作转给活动的那一栏
+  - 分组后表格多出组标题行：`itemIndex(forRow:)`、`row(forItem:)`、`selectedItemIndexes` 负责行号和 items 下标的换算，取选中项都走它们
   - `FileGridView`、`BrowserViewController+Grid`：图标视图，和列表共用数据，选中状态以列表为准（现成的文件操作不用改）；`ThumbnailProvider` 缓存缩略图
   - `VirtualLocation`：主页、分类、标签、智能分类编码成 `harbor://` 地址，复用导航和前进后退；`QuickAccessStore`、`SmartCategoryStore` 存快速访问和智能分类
   - `SpotlightCache`：默认分类、最近、标签、智能更新的分类用常驻查询（运行期间不重复搜，Spotlight 增量推送变化，更新合并成每秒最多一次）；结果快照存在 `~/Library/Caches/dev.lakes.harbor/spotlight`，重启后先显示快照再换成最新结果；用过主页的话启动 3 秒后预热。卡片数量另存在偏好 `homeCardCounts`

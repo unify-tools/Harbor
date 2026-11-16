@@ -129,6 +129,17 @@ enum Preferences {
         }
     }
 
+    static let groupingDidChange = Notification.Name("HarborGroupingDidChange")
+
+    /// 分组方式，所有窗口共用
+    static var grouping: FileGrouping {
+        get { defaults.string(forKey: "grouping").flatMap(FileGrouping.init(rawValue:)) ?? .none }
+        set {
+            defaults.set(newValue.rawValue, forKey: "grouping")
+            NotificationCenter.default.post(name: groupingDidChange, object: nil)
+        }
+    }
+
     static var lastDirectory: URL? {
         get { defaults.string(forKey: "lastDirectory").map { URL(filePath: $0, directoryHint: .isDirectory) } }
         set { defaults.set(newValue?.path(percentEncoded: false), forKey: "lastDirectory") }

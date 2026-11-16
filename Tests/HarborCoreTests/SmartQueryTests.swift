@@ -8,7 +8,8 @@ import Testing
         #expect(image == #"kMDItemContentType != "public.folder" && (kMDItemContentTypeTree == "public.image")"#)
 
         let video = SmartQuery.category(.video).metadataQueryString
-        #expect(video.hasSuffix(#"kMDItemContentType != "public.mpeg-2-transport-stream""#))
+        // 视频按具体格式列，不含 public.movie（.ts 源码会被识别成 MPEG-2 传输流）
+        #expect(video.contains(#"kMDItemContentTypeTree == "public.mpeg-4""#) && !video.contains("public.movie"))
 
         let recent = SmartQuery.recent.metadataQueryString
         #expect(recent.hasSuffix("kMDItemLastUsedDate >= $time.today(-30)"))

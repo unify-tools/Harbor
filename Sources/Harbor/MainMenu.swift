@@ -69,6 +69,7 @@ enum MainMenu {
         main.addItem(submenu("显示", [
             item("图标", #selector(BrowserViewController.showAsIcons(_:)), "1"),
             item("列表", #selector(BrowserViewController.showAsList(_:)), "2"),
+            submenu("分组方式", BrowserViewController.groupingMenuItems()),
             .separator(),
             item("显示隐藏文件", #selector(MainWindowController.toggleHiddenFiles(_:)), ".", [.command, .shift]),
             item("刷新", #selector(MainWindowController.refresh(_:)), "r"),

@@ -19,7 +19,7 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
     }
 
     var selectedURLs: [URL] {
-        tableView.selectedRowIndexes.compactMap { $0 < items.count ? items[$0].url(in: currentURL) : nil }
+        selectedItemIndexes.compactMap { $0 < items.count ? items[$0].url(in: currentURL) : nil }
     }
 
     // MARK: - 剪贴板（和 Finder 互通：写的是文件 URL）
@@ -158,11 +158,11 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
 
     /// 所选的文件夹各开一个新标签页
     @objc func openInNewTab(_ sender: Any?) {
-        open(rows: tableView.selectedRowIndexes, foldersInNewTabs: true)
+        open(rows: selectedItemIndexes, foldersInNewTabs: true)
     }
 
     private var selectionHasFolder: Bool {
-        tableView.selectedRowIndexes.contains { $0 < items.count && folderTarget(for: items[$0]) != nil }
+        selectedItemIndexes.contains { $0 < items.count && folderTarget(for: items[$0]) != nil }
     }
 
     /// ⌘D：在原地生成副本
@@ -219,7 +219,7 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
 
     /// 删除后选中原选区后面的第一项，方便连续操作
     private func nameAfterSelection() -> String? {
-        let selected = tableView.selectedRowIndexes
+        let selected = selectedItemIndexes
         guard let last = selected.last else { return nil }
         if let after = (last + 1..<items.count).first(where: { !selected.contains($0) }) { return items[after].name }
         if let before = (0..<last).reversed().first(where: { !selected.contains($0) }) { return items[before].name }
@@ -258,22 +258,23 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
 
     /// 回车或「重命名」：在名称列里直接编辑，默认选中不含扩展名的部分
     func beginRename() {
-        guard renamingItem == nil, tableView.selectedRowIndexes.count == 1,
-              let row = tableView.selectedRowIndexes.first, row < items.count else { return }
+        guard renamingItem == nil, selectedItemIndexes.count == 1,
+              let index = selectedItemIndexes.first, index < items.count else { return }
         let field: NSTextField
         if viewMode == .icons {
-            guard let gridField = gridNameField(at: row) else { return }
+            guard let gridField = gridNameField(at: index) else { return }
             field = gridField
         } else {
             let column = tableView.column(withIdentifier: NSUserInterfaceItemIdentifier(Column.name.rawValue))
             guard column >= 0 else { return }
+            let row = row(forItem: index)
             tableView.scrollRowToVisible(row)
             guard let cell = tableView.view(atColumn: column, row: row, makeIfNecessary: true) as? NSTableCellView,
                   let cellField = cell.textField else { return }
             field = cellField
         }
 
-        let item = items[row]
+        let item = items[index]
         renamingItem = item
         renamingField = field
         field.isEditable = true
@@ -343,9 +344,10 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
     // MARK: - 拖拽
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
-        guard row < items.count, renamingItem == nil else { return nil }
-        return items[row].url(in: currentURL) as NSURL
+        guard let index = itemIndex(forRow: row), renamingItem == nil else { return nil }
+        return items[index].url(in: currentURL) as NSURL
     }
+
 
     func tableView(_ tableView: NSTableView, validateDrop info: any NSDraggingInfo, proposedRow row: Int,
                    proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
@@ -384,8 +386,8 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
     }
 
     private func dropTarget(row: Int, dropOperation: NSTableView.DropOperation) -> URL {
-        if dropOperation == .on, row >= 0, row < items.count, items[row].isFolder {
-            return items[row].url(in: currentURL)
+        if dropOperation == .on, let index = itemIndex(forRow: row), items[index].isFolder {
+            return items[index].url(in: currentURL)
         }
         return currentURL
     }
@@ -415,10 +417,11 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let row = viewMode == .icons ? gridView.clickedIndex : tableView.clickedRow
+        // 右键点中的条目（items 下标），-1 表示空白处或组标题
+        let row = (viewMode == .icons ? gridView.clickedIndexPath.flatMap(itemIndex(for:)) : itemIndex(forRow: tableView.clickedRow)) ?? -1
         // 右键点在未选中的行上：改为选中这一行；点在空白处：取消选择
-        if row >= 0, !tableView.selectedRowIndexes.contains(row) {
-            tableView.selectRowIndexes([row], byExtendingSelection: false)
+        if row >= 0, !selectedItemIndexes.contains(row) {
+            selectItems([row])
         } else if row < 0 {
             tableView.deselectAll(nil)
         }
@@ -438,7 +441,7 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
             openWith.submenu = makeOpenWithMenu(for: selectedURLs)
             menu.addItem(openWith)
             if selectionHasFolder { add("在新标签页中打开", #selector(openInNewTab(_:))) }
-            if tableView.selectedRowIndexes.count == 1, selectionHasFolder {
+            if selectedItemIndexes.count == 1, selectionHasFolder {
                 add(QuickAccessStore.shared.contains(selectedURLs[0]) ? "从快速访问移除" : "添加至快速访问", #selector(toggleQuickAccess(_:)))
             }
             if selectionHasArchive {
@@ -492,6 +495,9 @@ extension BrowserViewController: NSMenuItemValidation, NSMenuDelegate, NSTextFie
             return true
         case #selector(newSmartCategory(_:)):
             return true
+        case #selector(setGrouping(_:)):
+            menuItem.state = FileGrouping.allCases.indices.contains(menuItem.tag) && FileGrouping.allCases[menuItem.tag] == grouping ? .on : .off
+            return !isVirtual
         default:
             break
         }

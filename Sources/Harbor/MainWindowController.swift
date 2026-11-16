@@ -7,6 +7,7 @@ private extension NSToolbarItem.Identifier {
     static let dualPane = Self("dualPane")
     static let terminal = Self("terminal")
     static let search = Self("search")
+    static let grouping = Self("grouping")
 }
 
 /// 一个窗口（或一个标签页）= 边栏 + 工作区；工作区上面是一到两个浏览区，下面是可收起的终端。
@@ -451,7 +452,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     // MARK: - 工具栏
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .back, .forward, .flexibleSpace, .dualPane, .terminal, .search]
+        [.toggleSidebar, .sidebarTrackingSeparator, .back, .forward, .flexibleSpace, .grouping, .dualPane, .terminal, .search]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -474,6 +475,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             return actionItem(identifier, symbol: "rectangle.split.2x1", label: "双栏", action: #selector(toggleDualPane(_:)))
         case .terminal:
             return actionItem(identifier, symbol: "apple.terminal", label: "终端", action: #selector(terminalButtonClicked(_:)))
+        case .grouping:
+            // 和 Finder 一样的「分组方式」下拉按钮；菜单项沿响应链交给活动的那一栏
+            let item = NSMenuToolbarItem(itemIdentifier: identifier)
+            let menu = NSMenu(title: "分组方式")
+            BrowserViewController.groupingMenuItems().forEach(menu.addItem)
+            item.menu = menu
+            item.image = NSImage(systemSymbolName: "rectangle.3.group", accessibilityDescription: "分组方式")
+                ?? NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "分组方式")
+            item.label = "分组方式"
+            item.toolTip = "分组方式"
+            item.showsIndicator = true
+            return item
         case .search:
             let item = NSSearchToolbarItem(itemIdentifier: identifier)
             item.label = "搜索"

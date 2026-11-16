@@ -12,6 +12,9 @@ extension BrowserViewController: NSCollectionViewDataSource, NSCollectionViewDel
         layout.sectionInset = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
         gridView.collectionViewLayout = layout
         gridView.register(FileGridItem.self, forItemWithIdentifier: FileGridItem.identifier)
+        gridView.register(GridGroupHeader.self, forSupplementaryViewOfKind: NSCollectionView.elementKindSectionHeader,
+                          withIdentifier: GridGroupHeader.identifier)
+        layout.sectionHeadersPinToVisibleBounds = true
         gridView.isSelectable = true
         gridView.allowsMultipleSelection = true
         gridView.allowsEmptySelection = true
@@ -32,10 +35,10 @@ extension BrowserViewController: NSCollectionViewDataSource, NSCollectionViewDel
             guard let self else { return false }
             return delegate?.browserRequestsPaneSwitch(self) ?? false
         }
-        gridView.onDoubleClick = { [weak self] index in
-            guard let self else { return }
+        gridView.onDoubleClick = { [weak self] indexPath in
+            guard let self, let index = itemIndex(for: indexPath) else { return }
             let inNewTabs = NSApp.currentEvent?.modifierFlags.contains(.command) == true
-            let selection = tableView.selectedRowIndexes
+            let selection = selectedItemIndexes
             open(rows: selection.contains(index) ? selection : [index], foldersInNewTabs: inNewTabs)
         }
         gridScroll.documentView = gridView
@@ -48,9 +51,58 @@ extension BrowserViewController: NSCollectionViewDataSource, NSCollectionViewDel
     @objc func showAsIcons(_ sender: Any?) { Preferences.viewMode = .icons }
     @objc func showAsList(_ sender: Any?) { Preferences.viewMode = .list }
 
+    /// 「分组方式」菜单项：tag 是 FileGrouping.allCases 的下标
+    @objc func setGrouping(_ sender: Any?) {
+        guard let tag = (sender as? NSMenuItem)?.tag, FileGrouping.allCases.indices.contains(tag) else { return }
+        Preferences.grouping = FileGrouping.allCases[tag]
+    }
+
+    static func groupingMenuItems() -> [NSMenuItem] {
+        FileGrouping.allCases.enumerated().flatMap { index, grouping -> [NSMenuItem] in
+            let item = NSMenuItem(title: grouping.title, action: #selector(setGrouping(_:)), keyEquivalent: "")
+            item.tag = index
+            // 和 Finder 一样，「无」和其余选项之间隔开
+            return grouping == .none ? [item, .separator()] : [item]
+        }
+    }
+
+    // MARK: - 分组：每组一个分区
+
+    /// 网格位置 → items 下标
+    func itemIndex(for indexPath: IndexPath) -> Int? {
+        let index = groups.isEmpty ? indexPath.item
+            : indexPath.section < groups.count ? groups[indexPath.section].range.lowerBound + indexPath.item : items.count
+        return index < items.count ? index : nil
+    }
+
+    /// items 下标 → 网格位置
+    func indexPath(forItem index: Int) -> IndexPath {
+        guard !groups.isEmpty, let section = groups.firstIndex(where: { $0.range.contains(index) }) else {
+            return IndexPath(item: index, section: 0)
+        }
+        return IndexPath(item: index - groups[section].range.lowerBound, section: section)
+    }
+
+    /// 分组时显示组标题，不分组时不留空白
+    func updateGridHeaders() {
+        (gridView.collectionViewLayout as? NSCollectionViewFlowLayout)?.headerReferenceSize =
+            groups.isEmpty ? .zero : NSSize(width: 0, height: GridGroupHeader.height)
+    }
+
+    func numberOfSections(in collectionView: NSCollectionView) -> Int {
+        max(1, groups.count)
+    }
+
+    func collectionView(_ collectionView: NSCollectionView, viewForSupplementaryElementOfKind kind: NSCollectionView.SupplementaryElementKind,
+                        at indexPath: IndexPath) -> NSView {
+        let header = collectionView.makeSupplementaryView(ofKind: kind, withIdentifier: GridGroupHeader.identifier, for: indexPath)
+        (header as? GridGroupHeader)?.title = indexPath.section < groups.count ? groups[indexPath.section].title : ""
+        return header
+    }
+
     /// 列表 → 网格（列表的选中变化、重新加载之后）
     func syncGridFromTable(scroll: Bool) {
-        let paths = Set(tableView.selectedRowIndexes.filter { $0 < gridView.numberOfItems(inSection: 0) }.map { IndexPath(item: $0, section: 0) })
+        let paths = Set(selectedItemIndexes.map(indexPath(forItem:)))
         if gridView.selectionIndexPaths != paths { gridView.selectionIndexPaths = paths }
         if scroll, let first = paths.min() {
             gridView.scrollToItems(at: [first], scrollPosition: .nearestHorizontalEdge)
@@ -61,20 +113,20 @@ extension BrowserViewController: NSCollectionViewDataSource, NSCollectionViewDel
     private func syncTableFromGrid() {
         guard !isSyncingSelection else { return }
         isSyncingSelection = true
-        tableView.selectRowIndexes(IndexSet(gridView.selectionIndexPaths.map(\.item)), byExtendingSelection: false)
+        selectItems(IndexSet(gridView.selectionIndexPaths.compactMap(itemIndex(for:))))
         isSyncingSelection = false
     }
 
     // MARK: - 数据
 
     func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
-        items.count
+        groups.isEmpty ? items.count : section < groups.count ? groups[section].range.count : 0
     }
 
     func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
         let cell = collectionView.makeItem(withIdentifier: FileGridItem.identifier, for: indexPath)
-        if let cell = cell as? FileGridItem, indexPath.item < items.count {
-            cell.configure(item: items[indexPath.item], in: currentURL)
+        if let cell = cell as? FileGridItem, let index = itemIndex(for: indexPath) {
+            cell.configure(item: items[index], in: currentURL)
         }
         return cell
     }
@@ -89,7 +141,7 @@ extension BrowserViewController: NSCollectionViewDataSource, NSCollectionViewDel
 
     /// 重命名时用：网格里这一项的文件名标签
     func gridNameField(at index: Int) -> NSTextField? {
-        let path = IndexPath(item: index, section: 0)
+        let path = indexPath(forItem: index)
         gridView.scrollToItems(at: [path], scrollPosition: .nearestHorizontalEdge)
         gridView.layoutSubtreeIfNeeded()
         return (gridView.item(at: path) as? FileGridItem)?.nameField
@@ -102,15 +154,15 @@ extension BrowserViewController: NSCollectionViewDataSource, NSCollectionViewDel
     }
 
     func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> (any NSPasteboardWriting)? {
-        indexPath.item < items.count ? items[indexPath.item].url(in: currentURL) as NSURL : nil
+        itemIndex(for: indexPath).map { items[$0].url(in: currentURL) as NSURL }
     }
 
     func collectionView(_ collectionView: NSCollectionView, validateDrop draggingInfo: any NSDraggingInfo,
                         proposedIndexPath proposedDropIndexPath: AutoreleasingUnsafeMutablePointer<NSIndexPath>,
                         dropOperation proposedDropOperation: UnsafeMutablePointer<NSCollectionView.DropOperation>) -> NSDragOperation {
-        let index = proposedDropIndexPath.pointee.item
+        let index = itemIndex(for: proposedDropIndexPath.pointee as IndexPath)
         // 不是落在文件夹上：当作放进当前文件夹（不在两项之间画插入线）
-        if proposedDropOperation.pointee != .on || index >= items.count || !items[index].isFolder {
+        if proposedDropOperation.pointee != .on || index.map({ !items[$0].isFolder }) ?? true {
             proposedDropOperation.pointee = .before
         }
         return validatedDropOperation(draggingInfo, target: gridDropTarget(index: index, operation: proposedDropOperation.pointee))
@@ -118,11 +170,11 @@ extension BrowserViewController: NSCollectionViewDataSource, NSCollectionViewDel
 
     func collectionView(_ collectionView: NSCollectionView, acceptDrop draggingInfo: any NSDraggingInfo,
                         indexPath: IndexPath, dropOperation: NSCollectionView.DropOperation) -> Bool {
-        performFileDrop(draggingInfo, target: gridDropTarget(index: indexPath.item, operation: dropOperation))
+        performFileDrop(draggingInfo, target: gridDropTarget(index: itemIndex(for: indexPath), operation: dropOperation))
     }
 
-    private func gridDropTarget(index: Int, operation: NSCollectionView.DropOperation) -> URL {
-        if operation == .on, index < items.count, items[index].isFolder {
+    private func gridDropTarget(index: Int?, operation: NSCollectionView.DropOperation) -> URL {
+        if operation == .on, let index, items[index].isFolder {
             return items[index].url(in: currentURL)
         }
         return currentURL

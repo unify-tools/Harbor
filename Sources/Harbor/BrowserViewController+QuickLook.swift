@@ -68,12 +68,12 @@ extension BrowserViewController: @preconcurrency QLPreviewPanelDataSource, @prec
               let row = items.firstIndex(where: { $0.url(in: currentURL) == url }) else { return .zero }
         if viewMode == .icons {
             // 图标视图：从网格里这一项的图标开始
-            guard let cell = gridView.item(at: IndexPath(item: row, section: 0))?.imageView,
+            guard let cell = gridView.item(at: indexPath(forItem: row))?.imageView,
                   gridView.visibleRect.intersects(cell.convert(cell.bounds, to: gridView)) else { return .zero }
             return window.convertToScreen(cell.convert(cell.bounds, to: nil))
         }
         guard let column = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(Column.name.rawValue)) else { return .zero }
-        let cell = tableView.frameOfCell(atColumn: tableView.column(withIdentifier: column.identifier), row: row)
+        let cell = tableView.frameOfCell(atColumn: tableView.column(withIdentifier: column.identifier), row: self.row(forItem: row))
         let icon = NSRect(x: cell.minX, y: cell.minY, width: cell.height, height: cell.height)
         guard tableView.visibleRect.intersects(icon) else { return .zero }
         return window.convertToScreen(tableView.convert(icon, to: nil))

@@ -40,9 +40,16 @@ enum DebugHooks {
 @MainActor
 enum SmokeScript {
     private static var failures = 0
+    /// 脚本按表格行号选文件，前提是不分组：用户开着分组时临时关掉，结束前恢复
+    private static var savedGrouping: FileGrouping?
 
     static func runIfRequested() {
-        switch ProcessInfo.processInfo.environment["HARBOR_SCRIPT"] {
+        guard let script = ProcessInfo.processInfo.environment["HARBOR_SCRIPT"] else { return }
+        if script != "m8", Preferences.grouping != .none {
+            savedGrouping = Preferences.grouping
+            Preferences.grouping = .none
+        }
+        switch script {
         case "smoke": Task { await run() }
         case "m3": Task { await M3Script.run() }
         case "m4": Task { await M4Script.run() }
@@ -136,8 +143,10 @@ enum SmokeScript {
         }
         await wait()
         check(exists("folder/改名后") && !exists("folder/未命名文件夹"), "新建文件夹并重命名")
+        let undoTitle = window.undoManager?.undoMenuItemTitle ?? "无"
         send("undo:")
-        check(await waitUntil(3) { exists("folder/未命名文件夹") && !exists("folder/改名后") }, "撤销重命名")
+        check(await waitUntil(3) { exists("folder/未命名文件夹") && !exists("folder/改名后") },
+              "撤销重命名（撤销前菜单：\(undoTitle)；之后 folder 里：\(((try? fm.contentsOfDirectory(atPath: root.appending(path: "folder").path)) ?? []).sorted())）")
 
         // 回到上层，移到废纸篓再撤销
         browser.goUp()
@@ -218,6 +227,8 @@ enum SmokeScript {
     static func finish(_ error: String?) {
         if let error { check(false, error) }
         FileHandle.standardError.write(Data("[smoke] 结束，失败 \(failures) 项\n".utf8))
+        // exit() 不跑 defer，恢复要在这里做
+        if let savedGrouping { Preferences.grouping = savedGrouping }
         exit(failures == 0 ? 0 : 1)
     }
 

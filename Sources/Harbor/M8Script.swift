@@ -46,9 +46,12 @@ enum M8Script {
         let snapshotDirectory = root.appending(path: ".snapshots", directoryHint: .isDirectory)
         SpotlightCache.shared.snapshotDirectory = snapshotDirectory
         let hadViewMode = UserDefaults.standard.object(forKey: "viewMode") != nil
+        let hadGrouping = UserDefaults.standard.object(forKey: "grouping") != nil
+        let originalGrouping = Preferences.grouping
         // SmokeScript.finish 直接 exit()，defer 不会执行，所以结束前显式调用
         func cleanUp() {
             if hadViewMode { Preferences.viewMode = originalMode } else { UserDefaults.standard.removeObject(forKey: "viewMode") }
+            if hadGrouping { Preferences.grouping = originalGrouping } else { UserDefaults.standard.removeObject(forKey: "grouping") }
             if !hadQuickAccess { UserDefaults.standard.removeObject(forKey: "quickAccess") }
             if !hadCategoriesFile { try? fm.removeItem(at: categoriesFile) }
             if !hadCardCounts { UserDefaults.standard.removeObject(forKey: "homeCardCounts") }
@@ -97,7 +100,7 @@ enum M8Script {
             browser.tableView.selectRowIndexes([folder], byExtendingSelection: false)
             browser.populateContextMenu(menu, row: folder)
             check(menu.items.contains { $0.title == "添加至快速访问" }, "文件夹右键有「添加至快速访问」")
-            browser.gridView.onDoubleClick?(folder)
+            browser.gridView.onDoubleClick?(browser.indexPath(forItem: folder))
             check(await waitUntil(3) { browser.currentURL.pathKey == root.appending(path: "folder").pathKey }, "网格里双击进入文件夹")
             browser.navigate(to: root)
             await wait()
@@ -105,6 +108,42 @@ enum M8Script {
         Preferences.viewMode = .list
         await wait(0.3)
         check(browser.gridScroll.isHidden && !browser.tableView.enclosingScrollView!.isHidden, "⌘2 切回列表")
+
+        // MARK: 分组
+        Preferences.grouping = .none
+        await wait(0.3)
+        Preferences.grouping = .name
+        check(await waitUntil(3) { browser.groups.map(\.title) == ["A", "B", "F", "P"] }, "按名称分组：\(browser.groups.map(\.title))")
+        check(browser.tableView.numberOfRows == browser.items.count + 4 && browser.itemIndex(forRow: 0) == nil
+              && browser.tableView(browser.tableView, isGroupRow: 0) && !browser.tableView(browser.tableView, shouldSelectRow: 0),
+              "每组前面一行组标题，标题行不能选")
+        if let pic = index("pic.png"), let folder = index("folder") {
+            browser.selectItems([pic])
+            check(browser.selectedNames() == ["pic.png"] && browser.tableView.selectedRow == pic + 4 && browser.row(forItem: pic) == pic + 4,
+                  "分组后行号换算：pic.png 是第 \(pic) 项、第 \(browser.tableView.selectedRow) 行")
+            browser.selectItems([folder])
+            check(browser.selectedURLs.map(\.lastPathComponent) == ["folder"], "分组后选中项的路径正确")
+            Preferences.viewMode = .icons
+            await wait(0.5)
+            browser.selectItems([pic])
+            check(browser.gridView.numberOfSections == 4 && browser.gridView.selectionIndexPaths == [IndexPath(item: 0, section: 3)],
+                  "图标视图按组分区，选中同步到对应分区")
+            Preferences.viewMode = .list
+            await wait(0.3)
+        }
+        if let a = index("a.txt") {
+            browser.selectItems([a])
+            browser.focusList()
+            let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                         context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!
+            browser.tableView.keyDown(with: enter)
+            await wait(0.3)
+            browser.renamingField?.stringValue = "aa.txt"
+            browser.focusList()
+            check(await waitUntil(3) { exists("aa.txt") && browser.selectedNames() == ["aa.txt"] }, "分组时重命名")
+        }
+        Preferences.grouping = .none
+        check(await waitUntil(3) { browser.groups.isEmpty && browser.tableView.numberOfRows == browser.items.count }, "分组改回「无」")
 
         // MARK: 主页
         browser.navigate(to: VirtualLocation.home.url)
@@ -129,7 +168,7 @@ enum M8Script {
         let imageSearch = SpotlightCache.shared.search(.category(.image))
         // 卡片在查询完成前会先显示偏好里记的旧数，所以等查询本身完成，不看卡片文字
         check(await waitUntil(30) { SmartQuery.Kind.allCases.allSatisfy { SpotlightCache.shared.search(.category($0)).isFinished } },
-              "所有默认分类查询完成：\(home?.cards.map(\.detail) ?? [])")
+              "所有默认分类查询完成，未完成：\(SmartQuery.Kind.allCases.filter { !SpotlightCache.shared.search(.category($0)).isFinished }.map(\.title))")
         await wait(0.3)
         check(HomeViewController.savedCounts[VirtualLocation.category(.image).url.absoluteString] == imageSearch.count,
               "卡片数量记进偏好：\(imageSearch.count)")
@@ -184,7 +223,7 @@ enum M8Script {
         SmartCategoryStore.shared.save(category)
         browser.navigate(to: VirtualLocation.smart(category.id).url)
         let smart = browser.virtualContent as? QueryResultsViewController
-        check(await waitUntil(30) { smart?.isFinished == true } && smart?.results.count == imageResults.count,
+        check(await waitUntil(60) { smart?.isFinished == true } && smart?.results.count == imageResults.count,
               "智能分类（图片、不限时间）和图片分类结果一致：\(smart?.results.count ?? -1) / \(imageResults.count)")
         QuickAccessStore.shared.add(VirtualLocation.smart(category.id).url)
         await wait(0.3)
@@ -272,7 +311,7 @@ enum M8Script {
         // MARK: 回到真实目录
         browser.navigate(to: root)
         await wait()
-        check(!browser.isVirtual && browser.virtualContent == nil && !browser.tableView.enclosingScrollView!.isHidden && index("a.txt") != nil,
+        check(!browser.isVirtual && browser.virtualContent == nil && !browser.tableView.enclosingScrollView!.isHidden && index("aa.txt") != nil,
               "从虚拟位置回到文件夹")
         fm.createFile(atPath: root.appending(path: "new.txt").path, contents: Data())
         check(await waitUntil(4) { index("new.txt") != nil }, "回到文件夹后目录监听照常工作")

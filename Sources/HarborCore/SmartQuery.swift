@@ -23,15 +23,14 @@ public struct SmartQuery: Codable, Sendable, Hashable {
                 // 不含 Markdown：开发项目（node_modules）里成千上万的 README 会淹没真正的文档
                 ["com.adobe.pdf", "public.composite-content", "public.presentation", "public.spreadsheet", "public.rtf"]
             case .image: ["public.image"]
-            case .video: ["public.movie"]
+            // 不用 public.movie：.ts 源码文件被识别成 MPEG-2 传输流（属于 public.movie），开发机上有几十万个，
+            // 先全拿出来再排除会很慢。直接列常见视频格式，每个都是一次索引查找
+            case .video: ["public.mpeg-4", "com.apple.m4v-video", "com.apple.quicktime-movie", "public.avi", "public.mpeg",
+                          "public.3gpp", "public.3gpp2", "com.microsoft.windows-media-wmv", "org.webmproject.webm",
+                          "public.avchd-mpeg-2-transport-stream", "com.adobe.flash.video", "public.dv-movie"]
             case .audio: ["public.audio"]
             case .archive: ["public.archive", "org.7-zip.7-zip-archive", "com.rarlab.rar-archive"]
             }
-        }
-
-        /// 要排除的类型：.ts 被系统识别成 MPEG-2 传输流（属于视频），开发项目里的 TypeScript 文件会混进视频
-        var excludedTypes: [String] {
-            self == .video ? ["public.mpeg-2-transport-stream"] : []
         }
     }
 
@@ -112,9 +111,6 @@ public struct SmartQuery: Codable, Sendable, Hashable {
         let types = kinds.flatMap(\.contentTypes)
         if !types.isEmpty {
             clauses.append("(" + types.map { #"kMDItemContentTypeTree == "\#($0)""# }.joined(separator: " || ") + ")")
-        }
-        for excluded in kinds.flatMap(\.excludedTypes) {
-            clauses.append(#"kMDItemContentType != "\#(excluded)""#)
         }
         let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {

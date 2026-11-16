@@ -21,7 +21,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private enum LoadOutcome: Sendable {
-        case success([FileItem])
+        case success([FileItem], [FileGroup])
         case failure(DirectoryReadError)
     }
 
@@ -54,6 +54,42 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     private(set) var virtualContent: NSViewController?
     var virtualResults: QueryResultsViewController? {
         (virtualContent as? QueryResultsViewController) ?? (virtualContent as? HomeViewController)?.recent
+    }
+
+    /// 分组方式（所有窗口共用）和分组结果：items 按组重排过，每组在 items 里是连续的一段
+    private(set) var grouping = Preferences.grouping
+    private(set) var groups: [FileGroup] = []
+
+    /// 表格行 → items 下标。分组时每组前面有一行组标题，标题行返回 nil
+    func itemIndex(forRow row: Int) -> Int? {
+        guard row >= 0 else { return nil }
+        guard !groups.isEmpty else { return row < items.count ? row : nil }
+        for (index, group) in groups.enumerated() {
+            let header = group.range.lowerBound + index
+            if row == header { return nil }
+            if row <= header + group.range.count { return row - index - 1 }
+        }
+        return nil
+    }
+
+    /// items 下标 → 表格行
+    func row(forItem index: Int) -> Int {
+        guard !groups.isEmpty else { return index }
+        return index + (groups.firstIndex { $0.range.contains(index) } ?? 0) + 1
+    }
+
+    /// 组标题行是第几组
+    func groupIndex(forHeaderRow row: Int) -> Int? {
+        groups.indices.first { groups[$0].range.lowerBound + $0 == row }
+    }
+
+    /// 选中的条目（items 下标）。组标题行不能选，所以和表格选中行一一对应
+    var selectedItemIndexes: IndexSet {
+        IndexSet(tableView.selectedRowIndexes.compactMap(itemIndex(forRow:)))
+    }
+
+    func selectItems(_ indexes: IndexSet) {
+        tableView.selectRowIndexes(IndexSet(indexes.map(row(forItem:))), byExtendingSelection: false)
     }
 
     /// 列表 / 图标，所有窗口共用一个设置
@@ -168,6 +204,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         applyViewMode()
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(viewModeDidChange), name: Preferences.viewModeDidChange, object: nil)
+        center.addObserver(self, selector: #selector(groupingDidChange), name: Preferences.groupingDidChange, object: nil)
         center.addObserver(self, selector: #selector(smartCategoriesDidChange), name: SmartCategoryStore.didChange, object: nil)
         navigate(to: currentURL)
     }
@@ -178,6 +215,12 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         viewMode = Preferences.viewMode
         applyViewMode()
         if hadFocus { focusList() }
+    }
+
+    @objc private func groupingDidChange() {
+        guard grouping != Preferences.grouping else { return }
+        grouping = Preferences.grouping
+        if !isVirtual { reload(selecting: nil, isNavigation: false) }
     }
 
     /// 正在看的智能分类改了条件或名称：重新查询
@@ -365,6 +408,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         generation += 1
         isLoading = false
         items = []
+        groups = []
         tableView.reloadData()
         gridView.reloadData()
         placeholder.hide()
@@ -459,19 +503,19 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         if isVirtual {
             virtualResults?.openSelection()
         } else {
-            open(rows: tableView.selectedRowIndexes)
+            open(rows: selectedItemIndexes)
         }
     }
 
     @objc private func openClicked(_ sender: Any?) {
-        let row = tableView.clickedRow
-        guard row >= 0 else { return }
+        guard let index = itemIndex(forRow: tableView.clickedRow) else { return }
         // ⌘双击：文件夹在新标签页打开
         let inNewTabs = NSApp.currentEvent?.modifierFlags.contains(.command) == true
-        open(rows: tableView.selectedRowIndexes.contains(row) ? tableView.selectedRowIndexes : [row], foldersInNewTabs: inNewTabs)
+        let selection = selectedItemIndexes
+        open(rows: selection.contains(index) ? selection : [index], foldersInNewTabs: inNewTabs)
     }
 
-    /// 单个文件夹就进入；多选时文件夹各开一个新标签页，文件用默认应用打开
+    /// 单个文件夹就进入；多选时文件夹各开一个新标签页，文件用默认应用打开。rows 是 items 下标
     func open(rows: IndexSet, foldersInNewTabs: Bool = false) {
         let selected = rows.compactMap { $0 < items.count ? items[$0] : nil }
         guard !selected.isEmpty else { return }
@@ -521,6 +565,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let url = currentURL
         let showHidden = showHidden
         let order = sortOrder
+        let grouping = grouping
         isLoading = true
         refreshPending = false
         let startedAt = ContinuousClock.now
@@ -528,7 +573,9 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             let outcome: LoadOutcome
             do throws(DirectoryReadError) {
                 let raw = try DirectoryReader.read(url)
-                outcome = .success(FileSorter.arrange(raw, showHidden: showHidden, order: order))
+                let sorted = FileSorter.arrange(raw, showHidden: showHidden, order: order)
+                let grouped = FileGrouper.group(sorted, by: grouping, in: url, appName: { AppNames.name(for: $0, in: url) })
+                outcome = .success(grouped.items, grouped.groups)
             } catch {
                 outcome = .failure(error)
             }
@@ -546,9 +593,11 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         }
 
         switch outcome {
-        case .success(let newItems):
+        case .success(let newItems, let newGroups):
             let keep = names ?? selectedNames()
             items = newItems
+            groups = newGroups
+            updateGridHeaders()
             tableView.reloadData()
             if viewMode == .icons { gridView.reloadData() }
             select(names: keep, scroll: isNavigation)
@@ -575,6 +624,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
                 return
             }
             items = []
+            groups = []
             tableView.reloadData()
             if viewMode == .icons { gridView.reloadData() }
             showError(error)
@@ -612,7 +662,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     func selectedNames() -> [String] {
-        tableView.selectedRowIndexes.compactMap { $0 < items.count ? items[$0].name : nil }
+        selectedItemIndexes.compactMap { $0 < items.count ? items[$0].name : nil }
     }
 
     private func select(names: [String], scroll: Bool) {
@@ -625,9 +675,9 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         for (index, item) in items.enumerated() where wanted.contains(item.name) {
             indexes.insert(index)
         }
-        tableView.selectRowIndexes(indexes, byExtendingSelection: false)
+        selectItems(indexes)
         if scroll, let first = indexes.first {
-            tableView.scrollRowToVisible(first)
+            tableView.scrollRowToVisible(row(forItem: first))
             if viewMode == .icons { syncGridFromTable(scroll: true) }
         }
     }
@@ -657,12 +707,25 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     // MARK: - NSTableViewDataSource / Delegate
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        items.count
+        items.count + groups.count
+    }
+
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        !groups.isEmpty && itemIndex(forRow: row) == nil
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        itemIndex(forRow: row) != nil
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let tableColumn, row < items.count, let column = Column(rawValue: tableColumn.identifier.rawValue) else { return nil }
-        let item = items[row]
+        if let group = groupIndex(forHeaderRow: row), !groups.isEmpty {
+            let header = tableView.makeView(withIdentifier: GroupHeaderView.identifier, owner: self) as? GroupHeaderView ?? GroupHeaderView()
+            header.title = groups[group].title
+            return header
+        }
+        guard let tableColumn, let index = itemIndex(forRow: row), let column = Column(rawValue: tableColumn.identifier.rawValue) else { return nil }
+        let item = items[index]
         let cell = tableView.makeView(withIdentifier: tableColumn.identifier, owner: self) as? FileCellView
             ?? FileCellView(identifier: tableColumn.identifier, style: column == .name ? .name : column == .size ? .number : .detail)
         switch column {
@@ -698,7 +761,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     /// 输入文件名快速定位（系统自带的 type-select），只按名称列匹配
     func tableView(_ tableView: NSTableView, typeSelectStringFor tableColumn: NSTableColumn?, row: Int) -> String? {
-        guard tableColumn?.identifier.rawValue == Column.name.rawValue, row < items.count else { return nil }
-        return items[row].name
+        guard tableColumn?.identifier.rawValue == Column.name.rawValue, let index = itemIndex(forRow: row) else { return nil }
+        return items[index].name
     }
 }

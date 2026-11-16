@@ -1,6 +1,7 @@
 import AppKit
 import HarborCore
 import QuickLookThumbnailing
+import Synchronization
 
 /// 图标视图：和列表用同一份 items，选中状态以列表为准（见 BrowserViewController+Grid）。
 /// 回车重命名、空格快速查看、Tab 切栏、双击打开，和列表一致
@@ -9,9 +10,9 @@ final class FileGridView: NSCollectionView {
     var onSpace: (() -> Void)?
     var onTab: (() -> Bool)?
     var onFocus: (() -> Void)?
-    var onDoubleClick: ((Int) -> Void)?
-    /// 右键点中的项目，-1 表示空白处（菜单据此决定内容）
-    private(set) var clickedIndex = -1
+    var onDoubleClick: ((IndexPath) -> Void)?
+    /// 右键点中的项目，nil 表示空白处（菜单据此决定内容）
+    private(set) var clickedIndexPath: IndexPath?
 
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
@@ -37,20 +38,20 @@ final class FileGridView: NSCollectionView {
 
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
-        if event.clickCount == 2, let index = indexPathForItem(at: convert(event.locationInWindow, from: nil))?.item {
-            onDoubleClick?(index)
+        if event.clickCount == 2, let indexPath = indexPathForItem(at: convert(event.locationInWindow, from: nil)) {
+            onDoubleClick?(indexPath)
         }
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
-        clickedIndex = indexPathForItem(at: convert(event.locationInWindow, from: nil))?.item ?? -1
+        clickedIndexPath = indexPathForItem(at: convert(event.locationInWindow, from: nil))
         return super.menu(for: event)
     }
 
     /// 菜单关掉后清掉，免得键盘打开的菜单用上一次的位置
     override func didCloseMenu(_ menu: NSMenu, with event: NSEvent?) {
         super.didCloseMenu(menu, with: event)
-        clickedIndex = -1
+        clickedIndexPath = nil
     }
 }
 
@@ -174,3 +175,81 @@ final class ThumbnailProvider {
         "\(url.path(percentEncoded: false))|\(modified?.timeIntervalSince1970 ?? 0)|\(Int(size.width))" as NSString
     }
 }
+
+/// 分组时的组标题：列表里是组标题行，网格里是分区标题，样式一致
+final class GroupHeaderView: NSTableCellView {
+    static let identifier = NSUserInterfaceItemIdentifier("GroupHeader")
+    var title: String {
+        get { label.stringValue }
+        set { label.stringValue = newValue }
+    }
+    private let label = NSTextField(labelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        identifier = Self.identifier
+        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        textField = label
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+final class GridGroupHeader: NSView, NSCollectionViewElement {
+    static let identifier = NSUserInterfaceItemIdentifier("GridGroupHeader")
+    static let height: CGFloat = 30
+    var title: String {
+        get { label.stringValue }
+        set { label.stringValue = newValue }
+    }
+    private let label = NSTextField(labelWithString: "")
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        // 吸顶时盖在图标上，要有底色
+        wantsLayer = true
+        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.92).cgColor
+        }
+    }
+}
+
+/// 「应用程序」分组用：按扩展名缓存默认应用的名称（后台线程调用）
+enum AppNames {
+    private static let cache = Mutex<[String: String]>([:])
+
+    static func name(for item: FileItem, in directory: URL) -> String {
+        let key = item.pathExtension.lowercased()
+        if let hit = cache.withLock({ $0[key] }) { return hit }
+        let app = NSWorkspace.shared.urlForApplication(toOpen: item.url(in: directory))
+        let name = app.map { (FileManager.default.displayName(atPath: $0.path(percentEncoded: false)) as NSString).deletingPathExtension } ?? ""
+        cache.withLock { $0[key] = name }
+        return name
+    }
+}
+
