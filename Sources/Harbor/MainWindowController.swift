@@ -8,6 +8,7 @@ private extension NSToolbarItem.Identifier {
     static let terminal = Self("terminal")
     static let search = Self("search")
     static let grouping = Self("grouping")
+    static let viewMode = Self("viewMode")
 }
 
 /// 一个窗口（或一个标签页）= 边栏 + 工作区；工作区上面是一到两个浏览区，下面是可收起的终端。
@@ -90,6 +91,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         terminalItem.isCollapsed = true
         terminalPanel.onDirectoryChange = { [weak self] url in self?.terminalDidChangeDirectory(url) }
         // 拖分隔条把终端拖没了：焦点不能留在看不见的终端里（列表相关的菜单都会被禁用）
+        NotificationCenter.default.addObserver(self, selector: #selector(updateViewModeItem),
+                                               name: Preferences.viewModeDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(workspaceDidResize),
                                                name: NSSplitView.didResizeSubviewsNotification, object: workspace.splitView)
         terminalPanel.onExit = { [weak self] in self?.terminalDidExit() }
@@ -212,6 +215,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         } else {
             window?.makeFirstResponder(terminalPanel.terminalView)
         }
+    }
+
+    /// 工具栏的「显示方式」按钮
+    private(set) weak var viewModeItem: NSMenuToolbarItem?
+
+    @objc func toolbarViewModeChosen(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let mode = Preferences.ViewMode(rawValue: raw) else { return }
+        Preferences.viewMode = mode
+    }
+
+    /// 工具栏「分组方式」菜单：tag 是 FileGrouping.allCases 的下标
+    @objc func toolbarGroupingChosen(_ sender: NSMenuItem) {
+        guard FileGrouping.allCases.indices.contains(sender.tag) else { return }
+        Preferences.grouping = FileGrouping.allCases[sender.tag]
+    }
+
+    @objc private func updateViewModeItem() {
+        let icons = Preferences.viewMode == .icons
+        viewModeItem?.image = NSImage(systemSymbolName: icons ? "square.grid.2x2" : "list.bullet",
+                                      accessibilityDescription: icons ? "图标视图" : "列表视图")
     }
 
     /// 工具栏的搜索框（快速搜索文件）
@@ -414,6 +437,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(toolbarViewModeChosen(_:)):
+            menuItem.state = (menuItem.representedObject as? String) == Preferences.viewMode.rawValue ? .on : .off
+            return true
+        case #selector(toolbarGroupingChosen(_:)):
+            menuItem.state = FileGrouping.allCases.indices.contains(menuItem.tag) && FileGrouping.allCases[menuItem.tag] == Preferences.grouping ? .on : .off
+            // 主页、分类这些虚拟位置不分组
+            return !activeBrowser.isVirtual
+        default:
+            break
+        }
         // 输入文字时，⌘↑ ⌘↓ ⌘[ ⌘]、F5 F6 不要作用到列表上
         if activeBrowser.isEditingText {
             switch menuItem.action {
@@ -452,7 +486,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     // MARK: - 工具栏
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .back, .forward, .flexibleSpace, .grouping, .dualPane, .terminal, .search]
+        [.toggleSidebar, .sidebarTrackingSeparator, .back, .forward, .flexibleSpace, .viewMode, .grouping, .dualPane, .terminal, .search]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -475,11 +509,35 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             return actionItem(identifier, symbol: "rectangle.split.2x1", label: "双栏", action: #selector(toggleDualPane(_:)))
         case .terminal:
             return actionItem(identifier, symbol: "apple.terminal", label: "终端", action: #selector(terminalButtonClicked(_:)))
+        case .viewMode:
+            // 和 Finder 一样的「显示方式」下拉按钮：图标跟着当前视图变，菜单里选图标 / 列表
+            let item = NSMenuToolbarItem(itemIdentifier: identifier)
+            let menu = NSMenu(title: "显示方式")
+            // 工具栏菜单的校验不一定沿着窗口的响应链走，菜单项直接指定窗口控制器处理
+            for (title, mode) in [("图标", Preferences.ViewMode.icons), ("列表", .list)] {
+                let entry = NSMenuItem(title: title, action: #selector(toolbarViewModeChosen(_:)), keyEquivalent: "")
+                entry.representedObject = mode.rawValue
+                entry.target = self
+                menu.addItem(entry)
+            }
+            item.menu = menu
+            item.label = "显示方式"
+            item.toolTip = "显示方式（⌘1 图标，⌘2 列表）"
+            item.showsIndicator = true
+            viewModeItem = item
+            updateViewModeItem()
+            return item
         case .grouping:
             // 和 Finder 一样的「分组方式」下拉按钮；菜单项沿响应链交给活动的那一栏
             let item = NSMenuToolbarItem(itemIdentifier: identifier)
             let menu = NSMenu(title: "分组方式")
-            BrowserViewController.groupingMenuItems().forEach(menu.addItem)
+            BrowserViewController.groupingMenuItems().forEach { entry in
+                if !entry.isSeparatorItem {
+                    entry.action = #selector(toolbarGroupingChosen(_:))
+                    entry.target = self
+                }
+                menu.addItem(entry)
+            }
             item.menu = menu
             item.image = NSImage(systemSymbolName: "rectangle.3.group", accessibilityDescription: "分组方式")
                 ?? NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "分组方式")

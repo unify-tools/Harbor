@@ -45,7 +45,7 @@ enum SmokeScript {
 
     static func runIfRequested() {
         guard let script = ProcessInfo.processInfo.environment["HARBOR_SCRIPT"] else { return }
-        if script != "m8", Preferences.grouping != .none {
+        if Preferences.grouping != .none {
             savedGrouping = Preferences.grouping
             Preferences.grouping = .none
         }

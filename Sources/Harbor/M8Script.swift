@@ -108,6 +108,36 @@ enum M8Script {
         Preferences.viewMode = .list
         await wait(0.3)
         check(browser.gridScroll.isHidden && !browser.tableView.enclosingScrollView!.isHidden, "⌘2 切回列表")
+        // 工具栏的显示方式按钮：图标跟着当前视图变，菜单里两项都能用、勾选当前的
+        if let item = controller.viewModeItem {
+            check(item.image?.accessibilityDescription == "列表视图", "工具栏显示方式按钮（列表）：\(item.image?.accessibilityDescription ?? "无")")
+            Preferences.viewMode = .icons
+            await wait(0.3)
+            item.menu.update()
+            check(item.image?.accessibilityDescription == "图标视图" && item.menu.items.first?.state == .on && item.menu.items.last?.state == .off
+                  && item.menu.items.allSatisfy(\.isEnabled),
+                  "切到图标后按钮跟着变，菜单勾选「图标」：\(item.image?.accessibilityDescription ?? "无")，\(item.menu.items.map { "\($0.title) state=\($0.state.rawValue) enabled=\($0.isEnabled)" })")
+            _ = item.menu.items.last.map { NSApp.sendAction($0.action!, to: $0.target, from: $0) }
+            await wait(0.3)
+            check(Preferences.viewMode == .list && browser.gridScroll.isHidden, "从工具栏菜单切回列表")
+        } else {
+            check(false, "工具栏里没有显示方式按钮")
+        }
+        // 工具栏的分组按钮：菜单可用、勾选当前分组，选了能生效
+        if let grouping = window.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "grouping" }) as? NSMenuToolbarItem {
+            grouping.menu.update()
+            let entries = grouping.menu.items.filter { !$0.isSeparatorItem }
+            check(entries.count == FileGrouping.allCases.count && entries.allSatisfy(\.isEnabled) && entries.first?.state == .on,
+                  "工具栏分组菜单可用并勾选「无」：\(entries.filter { $0.state == .on }.map(\.title))")
+            if let byName = entries.first(where: { $0.title == "名称" }) {
+                NSApp.sendAction(byName.action!, to: byName.target, from: byName)
+                check(await waitUntil(3) { Preferences.grouping == .name && !browser.groups.isEmpty }, "从工具栏菜单选「名称」分组生效")
+                Preferences.grouping = .none
+                _ = await waitUntil(3) { browser.groups.isEmpty }
+            }
+        } else {
+            check(false, "工具栏里没有分组按钮")
+        }
 
         // MARK: 分组
         Preferences.grouping = .none
